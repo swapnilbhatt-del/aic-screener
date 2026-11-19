@@ -17,12 +17,12 @@ Date: 2026-11-19. Tests: 342 passed. **Nothing has been drafted, approved or sen
 | 9 | A `no` or `unclear` reply cannot be acted on until a named human confirms it | DB trigger |
 | 10 | The action depends only on the label: yes or reschedule → propose slots (new drafts, which still need approval); no → close thread; unclear → hand to partner. Reply text never selects a recipient, an action or email content | code; injection test |
 | 11 | Follow-up drafted ≥ 3 days after the last sent message with no reply; one pending at a time; **max 2** | code + DB `CHECK (followups_sent BETWEEN 0 AND 2)` |
-| 12 | Slots: next free Tue/Thu, 14:00–18:00 IST, 30 minutes, skipping slots already proposed or held | code, from config |
+| 12 | Slots: Tue/Thu, 14:00–18:00 IST, 30 minutes, starting from the next business day (never same-day), skipping slots already proposed or held | code, from config (`slot_lead`, `holds_per_invite`) |
 
 ## Synthetic end-to-end run (throwaway DB, placeholder address, "Demo" names)
 
 1. Draft before any human decision → refused.
-2. Partner records "call" → draft created with 3 slots (Thu 19 Nov 14:00, 14:30, 15:00 IST) and 3 proposed holds. The body is the template with `[EDIT]` markers.
+2. Partner records "call" → draft created with 3 slots and 3 proposed holds. (The demo ran before the lead-time rule and offered Thu 19 Nov 14:00 on a Thursday morning; with the rule it would offer Tue 24 Nov 14:00, 14:30, 15:00.) The body is the template with `[EDIT]` markers.
 3. Send without approval → **blocked by the DB**: "email must be approved before it is sent".
 4. Approved, recipient not allow-listed → **blocked by the DB**: "recipient is not an allowed placeholder address".
 5. Allow-listed → dry-run send wrote `00001_Pumpwise_outreach.eml`.
@@ -46,8 +46,8 @@ Date: 2026-11-19. Tests: 342 passed. **Nothing has been drafted, approved or sen
 3. **Follow-ups count from the last sent message,** not from the first.
 4. **Replies are entered by hand** (`record_reply`). There is no inbox integration, by design in dry-run.
 
-## Decisions for you
+## Decisions (recorded 2026-11-19)
 
-1. **Minimum lead time for slots.** Slots currently start from the next free half-hour, so a draft written Thursday morning offers Thursday 14:00. Should it start from the next business day (or 48 hours)? [default proposal: next business day]
-2. **Your test inbox.** The allow-list is empty, so every real send fails. To try a dry run end to end on real data, add your own address: `python -m aic.outreach allow <address> <your name>`.
-3. **Holds per invite.** Each invite proposes 3 tentative holds; each needs its own approval, and unchosen ones can be released. Keep 3, or hold only the first slot?
+1. **Lead time:** slots start from the next business day; a same-day slot is never offered (`outreach.slot_lead: next_business_day`). Tested: Thursday morning → next Tuesday; Tuesday morning → Thursday; Friday evening → Tuesday.
+2. **Holds per invite:** keep 3 (`outreach.holds_per_invite: 3`); each hold needs its own approval, and unchosen holds can be released.
+3. **Test inbox:** still open. The allow-list is empty, so every send fails until you run `python -m aic.outreach allow <address> <your name>`.

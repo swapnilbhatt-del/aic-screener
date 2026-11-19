@@ -234,3 +234,14 @@ def test_thread_followup_cap_in_db(conn, tmp_path):
     r = invite(conn)
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("UPDATE threads SET followups_sent=3 WHERE id=?", (r["thread_id"],))
+
+
+@pytest.mark.parametrize("now,first", [
+    (datetime(2026, 11, 19, 11, 30, tzinfo=IST), datetime(2026, 11, 24, 14, 0, tzinfo=IST)),   # Thu am -> next Tue
+    (datetime(2026, 11, 23, 16, 0, tzinfo=IST), datetime(2026, 11, 24, 14, 0, tzinfo=IST)),    # Mon -> Tue
+    (datetime(2026, 11, 24, 9, 0, tzinfo=IST), datetime(2026, 11, 26, 14, 0, tzinfo=IST)),     # Tue am -> Thu, not same day
+    (datetime(2026, 11, 20, 18, 0, tzinfo=IST), datetime(2026, 11, 24, 14, 0, tzinfo=IST)),    # Fri -> Mon is lead day -> Tue
+])
+def test_slots_never_same_day(conn, now, first):
+    s = outreach.propose_slots(conn, now, 3)
+    assert s[0] == first and all(x.date() > now.date() for x in s)

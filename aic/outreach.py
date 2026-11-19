@@ -91,6 +91,11 @@ def propose_slots(conn: sqlite3.Connection, after: datetime, n: int = 3, cfg: Op
     taken = {datetime.fromisoformat(r[0]) for r in conn.execute(
         "SELECT start_at FROM calendar_holds WHERE status IN ('proposed', 'held')")}
     after = after.astimezone(IST)
+    if o.get("slot_lead") == "next_business_day":
+        d0 = after.date() + timedelta(days=1)
+        while d0.weekday() >= 5:            # skip Saturday and Sunday
+            d0 += timedelta(days=1)
+        after = max(after, datetime.combine(d0, time(0, 0), IST))
     out, d = [], after.date()
     while len(out) < n:
         if d.weekday() in days:
@@ -119,7 +124,7 @@ def draft_invite(conn, company: str, to_addr: str, founder_first: str, after: da
     if human_decision(conn, company) != "call":
         raise OutreachError(f"{company}: no human 'call' decision recorded; nothing is drafted")
     to = check_recipient(to_addr, addresses_in_documents() if doc_addrs is None else doc_addrs)
-    slots = propose_slots(conn, after)
+    slots = propose_slots(conn, after, n=config.load()["outreach"].get("holds_per_invite", 3))
     subject, body = _render("call_invite", company=company, founder_first=founder_first,
                             slots="\n".join(f"  - {fmt_slot(s)}" for s in slots), signature=signature)
     oid = conn.execute("INSERT INTO outbox (company, to_addr, subject, body, kind) VALUES (?, ?, ?, ?, 'outreach')",

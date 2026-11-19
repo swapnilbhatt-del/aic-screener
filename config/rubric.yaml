@@ -109,6 +109,8 @@ outreach:
   slot_days: [Tuesday, Thursday]
   slot_window: {start: "14:00", end: "18:00", tz: "Asia/Kolkata"}
   slot_minutes: 30
+  slot_lead: next_business_day   # user 2026-11-19: never offer a same-day slot
+  holds_per_invite: 3            # user 2026-11-19: each invite tentatively holds all proposed slots (each needs approval)
   follow_up_after_days: 3
   max_follow_ups: 2
   calendar_mode: ics_only
