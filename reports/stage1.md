@@ -60,7 +60,7 @@ Two agent comments were arithmetic slips: Pumpwise 140 sensors ÷ 6 customers = 
 
 ## Discrepancies already visible (to be confirmed in Stage 2, not scored here)
 
-CAPilot 31 vs 24 paying; EarnWise team 12 vs 5, clients 3 vs 1, credentials (Goldman/Google/IIM-A vs internship/vendor contract/tier-2 MBA); StockSathi 38 vs 42 retailers, credit funded by own capital vs NBFC partner with first-loss, CAC 2,860 vs "under 2,000"; Talkbook MRR 2.1 L vs 1.9 L vs 340 × 500 = 1.7 L; Yatrika "thousands" vs ~1,300 travellers, no raise amount in deck; RentRoute deck shows gross revenue only.
+CAPilot 31 vs 24 paying; EarnWise team 12 vs 5, clients 3 vs 1, founder credentials differ; StockSathi 38 vs 42 retailers, credit funded by own capital vs NBFC partner with first-loss, CAC 2,860 vs "under 2,000"; Talkbook MRR 2.1 L vs 1.9 L vs 340 × 500 = 1.7 L; Yatrika "thousands" vs ~1,300 travellers, no raise amount in deck; RentRoute deck shows gross revenue only.
 
 ## Open questions for you
 

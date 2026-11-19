@@ -51,6 +51,11 @@ def _float(s: str) -> Optional[float]:
 
 
 def compute_value(kind: str, as_written: str) -> Optional[float]:
+    v = _compute_value(kind, as_written)
+    return float(f"{v:.10g}") if v is not None else None   # strip float noise (9.8 * 1e5 -> 980000.0)
+
+
+def _compute_value(kind: str, as_written: str) -> Optional[float]:
     if kind == "inr":
         return units.parse_inr(as_written)
     if kind == "count":
