@@ -22,3 +22,6 @@ dashboard/*.html
 
 # Local tool config
 .claude/
+
+# Static site build for hosting (contains founder data and source PDFs)
+site/

@@ -1,0 +1,24 @@
+{
+ "source": "Agent runtime completion reports (subagent_tokens, duration_ms) for each agent run in the build session of 2026-11-19, plus timed runs of the code stages on the same machine. Tokens are as reported by the runtime; no price is applied here.",
+ "batch_size": 10,
+ "agents": [
+  {"stage": "extraction", "covers": ["CAPilot", "CareCorner", "EarnWise", "GrainKind"], "tokens": 110763, "seconds": 203.7},
+  {"stage": "extraction", "covers": ["Pumpwise", "RentRoute", "Settlr"], "tokens": 105472, "seconds": 191.7},
+  {"stage": "extraction", "covers": ["StockSathi", "Talkbook", "Yatrika"], "tokens": 114633, "seconds": 221.0},
+  {"stage": "research", "covers": ["CAPilot", "Talkbook"], "tokens": 172973, "seconds": 444.4},
+  {"stage": "research", "covers": ["CareCorner", "Yatrika"], "tokens": 171974, "seconds": 368.0},
+  {"stage": "research", "covers": ["EarnWise", "RentRoute"], "tokens": 177391, "seconds": 369.2},
+  {"stage": "research", "covers": ["Settlr", "StockSathi"], "tokens": 177788, "seconds": 472.6},
+  {"stage": "research", "covers": ["GrainKind", "Pumpwise"], "tokens": 177470, "seconds": 590.4},
+  {"stage": "research_fund", "covers": ["_fund (once per batch)"], "tokens": 156777, "seconds": 360.5},
+  {"stage": "scoring", "covers": ["CAPilot", "Talkbook"], "tokens": 142200, "seconds": 160.6},
+  {"stage": "scoring", "covers": ["CareCorner", "Yatrika"], "tokens": 150493, "seconds": 161.4},
+  {"stage": "scoring", "covers": ["EarnWise", "RentRoute"], "tokens": 138037, "seconds": 171.8},
+  {"stage": "scoring", "covers": ["Settlr", "StockSathi"], "tokens": 144736, "seconds": 197.4},
+  {"stage": "scoring", "covers": ["GrainKind", "Pumpwise"], "tokens": 134261, "seconds": 165.0},
+  {"stage": "backtest_scoring", "covers": ["12 blind memos (one-off validation)"], "tokens": 104338, "seconds": 220.7}
+ ],
+ "code_seconds": {"ingest": 2.84, "checks": 0.19, "scoring": 0.13, "dashboard": 0.11, "tests": 2.79},
+ "baseline": {"riya_minutes_per_application": 30, "riya_days_per_quarter": 19, "hours_per_day": 8,
+              "source": "Case brief (MESA_T2_Case 03_All in Capital.pdf): roughly 30 minutes per application; more than nineteen working days a quarter. Hours per day is an assumption."}
+}

@@ -7,10 +7,11 @@ created only for http(s) URLs and for local source PDFs.
 import json
 import re
 import sqlite3
+from typing import Optional
 from datetime import datetime
 from pathlib import Path
 
-from . import config, db
+from . import assurance, config, db
 from .ingest import COMPANIES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -127,8 +128,8 @@ def collect() -> dict:
     return {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "config_version": cfg.get("version"),
             "thresholds": cfg["thresholds"], "groups": {g: sum(cfg["criteria"][k]["weight"] for k in ks)
                                                          for g, ks in cfg["groups"].items()},
-            "companies": companies, "backtest": backtest,
-            "reports": sorted(p.name for p in (ROOT / "reports").glob("stage*.md"))}
+            "companies": companies, "backtest": backtest, "assurance": assurance.build(),
+            "reports": sorted(p.name for p in (ROOT / "reports").glob("stage*.md")) + ["trust_and_limits.md", "requirements_audit.md"]}
 
 
 PUBLISH_HEAD = """<title>AIC Screener</title>
@@ -203,11 +204,16 @@ def strip_portfolio(d: dict) -> dict:
     return scrub(d)
 
 
-def render(data: dict, publish: bool = False) -> str:
-    if publish:
+def render(data: dict, publish: bool = False, strip: Optional[bool] = None, base: str = "../") -> str:
+    """publish: page for the artifact host (no skeleton, host theme). strip: the trimmed online variant
+    (no local links, backtest or portfolio detail); defaults to `publish` for backward compatibility.
+    base: prefix for source-PDF and report links ('../' locally, '' when the files ship beside the page)."""
+    strip = publish if strip is None else strip
+    if strip:
         data = publishable(data)
     payload = json.dumps(data, ensure_ascii=False).replace("<", "\\u003c").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
-    html = TEMPLATE.replace("__DATA__", payload)
+    payload = payload.replace("../seed/applications/", base + "seed/applications/")
+    html = TEMPLATE.replace("__DATA__", payload).replace('"../reports/"+r', json.dumps(base + "reports/") + "+r")
     if publish:
         # The artifact host supplies doctype/head/body and the theme; keep page content, style and scripts.
         head_end = html.index("<style>")
@@ -227,12 +233,44 @@ def render(data: dict, publish: bool = False) -> str:
 
 
 PUBLISH_OUT = ROOT / "dashboard" / "publish.html"
+SITE = ROOT / "site"
 
 
-def build(publish: bool = False) -> Path:
-    out = PUBLISH_OUT if publish else OUT
+def companion_files() -> dict:
+    """Published path -> local file: source PDFs and reports that the full page links to."""
+    files = {}
+    for co in COMPANIES:
+        for doc in ("deck", "form"):
+            f = ROOT / "seed" / "applications" / co / f"{doc}.pdf"
+            if f.exists():
+                files[f"seed/applications/{co}/{doc}.pdf"] = f
+    for f in sorted((ROOT / "reports").glob("*.md")):
+        files[f"reports/{f.name}"] = f
+    return files
+
+
+def build(mode: str = "local") -> Path:
+    """local: dashboard/index.html (links ../). artifact: dashboard/publish.html, full content, files beside it.
+    trimmed: dashboard/publish.html, the earlier stripped variant. site: site/ for static hosting (Vercel)."""
+    import shutil
+    data = collect()
+    if mode == "local":
+        out, html = OUT, render(data)
+    elif mode == "artifact":
+        out, html = PUBLISH_OUT, render(data, publish=True, strip=False, base="")
+    elif mode == "trimmed":
+        out, html = PUBLISH_OUT, render(data, publish=True, strip=True)
+    elif mode == "site":
+        if SITE.exists():
+            shutil.rmtree(SITE)
+        out, html = SITE / "index.html", render(data, base="")
+        for rel, src in companion_files().items():
+            (SITE / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(src, SITE / rel)
+    else:
+        raise ValueError(mode)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render(collect(), publish=publish))
+    out.write_text(html)
     return out
 
 
@@ -316,6 +354,8 @@ function nav(){const n=document.getElementById("nav");n.replaceChildren();
   n.append(el("button",{"aria-current":String(current===null),on:{click:()=>{current=null;render();}}},el("span",{},"Overview"),el("span",{class:"t"},"")));
   for(const c of D.companies)n.append(el("button",{"aria-current":String(current===c.company),on:{click:()=>{current=c.company;render();window.scrollTo(0,0);}}},
     el("span",{},c.company),el("span",{class:"t"},c.total.toFixed(0)+" \u00B7 "+ICON[c.band])));
+  if(D.assurance){for(const [k,lab] of [["__trust","Trust & limits"],["__gaps","What's missing"],["__time","Time & cost"]])
+    n.append(el("button",{"aria-current":String(current===k),on:{click:()=>{current=k;render();window.scrollTo(0,0);}}},el("span",{},lab),el("span",{class:"t"},"")));}
   if(D.backtest)n.append(el("button",{"aria-current":String(current==="__bt"),on:{click:()=>{current="__bt";render();}}},el("span",{},"Backtest (12 memos)"),el("span",{class:"t"},"")));}
 
 // ---- overview chart: stacked subtotals with threshold lines
@@ -428,8 +468,40 @@ function backtestView(){const B=D.backtest;const v=el("section",{class:"card"},e
     el("tbody",{},...B.rows.map(r=>el("tr",{},el("td",{class:"n"},r.memo),el("td",{},r.company),el("td",{},r.decision),el("td",{class:"n"},r.total),el("td",{class:"n"},r.founder),el("td",{class:"n"},r.path),el("td",{},badge(r.band)),el("td",{class:r.result==="disagree"?"st-FAIL":""},r.result)))));
   v.append(t);return v;}
 
+function table(cols,rows){return el("table",{},el("thead",{},el("tr",{},...cols.map(c=>el("th",{},c[1])))),
+  el("tbody",{},...rows.map(r=>el("tr",{},...cols.map(c=>el("td",{class:c[2]||""},r[c[0]]==null?"":String(r[c[0]])))))));}
+function trustView(){const T=D.assurance.trust,B=T.backtest||{},E=T.evidence;const v=el("div");
+  v.append(el("section",{class:"card"},el("h2",{},"Trust & limits"),
+    el("p",{class:"muted"},"How far the screener can be trusted before it touches a real decision, in numbers computed from the pipeline's own files. The terms at the bottom are proposals for Kushal to agree in advance."),
+    table([["m","Measure"],["r","Result"]],[
+      {m:"Blind backtest, 12 past memos",r:B.agree+"/"+B.memos+" bands agree; every memo scored Pass, the same as 'always pass'"},
+      {m:"Ranking (AUC, in-sample)",r:"total "+B.auc_total+" · founder "+B.auc_founder+" · path "+B.auc_path+" (0.5 is chance)"},
+      {m:"Deciding reasons matched",r:"passes "+B.reasons_matched_passed[0]+"/"+B.reasons_matched_passed[1]+" · investments "+B.reasons_matched_invested[0]+"/"+B.reasons_matched_invested[1]},
+      {m:"Claims extracted",r:E.claims+" claims, "+E.claims_invalid+" invalid; 40/40 key figures recalled"},
+      {m:"Deterministic checks",r:E.checks+" checks ("+E.checks_fail+" fail, "+E.checks_unverifiable+" unverifiable); reference script agrees "+(E.reference_agreement?E.reference_agreement.join("/"):"")},
+      {m:"Web findings",r:E.findings+" findings, "+E.findings_low_confidence+" low confidence; "+E.spot_checked.join("/")+" spot-checks confirmed; "+E.not_found+" questions unanswerable"},
+      {m:"Founders confirmed by an outside source",r:E.founders_confirmed_online+" of "+E.founders_total}])));
+  v.append(el("section",{class:"card"},el("h2",{},"What holds"),...T.what_holds.map(x=>el("div",{class:"ev"},"✓ "+x))));
+  v.append(el("section",{class:"card"},el("h2",{},"Where it breaks"),table([["where","Where"],["numbers","Numbers","small"],["why","Why it matters","small"]],T.breaks)));
+  v.append(el("section",{class:"card"},el("h2",{},"Terms to agree in advance"),el("p",{class:"muted small"},"Proposals. Kushal sets the bar."),
+    el("ol",{},...T.terms.map(t=>el("li",{},t.term,el("div",{class:"muted small"},"Basis: "+t.basis)))),
+    el("p",{},"Agreed by: ____________________   Date: ____________")));
+  return v;}
+function gapsView(){return el("section",{class:"card"},el("h2",{},"What the system could not find, and what that costs"),
+  el("p",{class:"muted"},"The case gives none of these. Where something exists publicly, the system found it; where it doesn't, it says so and says what the absence costs."),
+  table([["missing","Missing"],["found","What was found","small"],["cost","What it costs","small"]],D.assurance.gaps));}
+function timeView(){const C=D.assurance.time_cost;if(!C||!C.batch_wall_minutes)return el("section",{class:"card"},el("p",{},"No run metrics."));
+  const tok=Object.entries(C.per_application_tokens).map(([k,v])=>({k:k,v:v.toLocaleString("en-IN")}));
+  return el("section",{class:"card"},el("h2",{},"Time & cost against nineteen days a quarter"),
+    table([["w","Who"],["t","Time"]],[
+      {w:"Riya today",t:C.riya_minutes_per_application+" minutes per application; "+C.riya_hours_per_batch_of_10+" hours for 10; "+C.riya_days_per_quarter+"+ days a quarter (about "+C.riya_implied_applications_per_quarter+" applications)"},
+      {w:"Screener, batch of 10",t:"about "+C.batch_wall_minutes+" minutes wall-clock with agents in parallel ("+C.agent_minutes_total+" agent-minutes, "+C.agent_minutes_per_application+" per application) plus "+C.code_seconds_batch+" seconds of code"}]),
+    el("h3",{},"Tokens per application (about "+C.per_application_tokens_total.toLocaleString("en-IN")+")"),table([["k","Stage"],["v","Tokens","n"]],tok),
+    el("p",{class:"small muted"},C.cost_note),el("h3",{},"Still done by a person"),...C.still_human.map(x=>el("div",{class:"ev"},"• "+x)),
+    el("p",{class:"small muted"},"Source: "+C.source));}
 function render(){nav();const view=document.getElementById("view");view.replaceChildren();
   if(current===null)view.append(overview());else if(current==="__bt")view.append(backtestView());
+  else if(current==="__trust")view.append(trustView());else if(current==="__gaps")view.append(gapsView());else if(current==="__time")view.append(timeView());
   else view.append(companyView(D.companies.find(c=>c.company===current)));}
 render();
 </script></body></html>
@@ -437,4 +509,5 @@ render();
 
 if __name__ == "__main__":
     import sys
-    print(build(publish="--publish" in sys.argv))
+    mode = next((a[2:] for a in sys.argv[1:] if a.startswith("--")), "local")
+    print(build({"publish": "artifact"}.get(mode, mode)))
