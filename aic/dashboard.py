@@ -156,7 +156,7 @@ def publishable(data: dict) -> dict:
 
 
 # Fund programme names kept off the online page (user, 2026-11-19).
-FUND_PROGRAMMES = ["TorQLabs"]
+FUND_PROGRAMMES = ["TorQLabs", "Golden Ticket"]
 
 
 def portfolio_names() -> list:
