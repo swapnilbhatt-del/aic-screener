@@ -88,3 +88,11 @@ def test_publish_variant_has_no_portfolio_references():
     # the local dashboard keeps the detail
     local = dashboard.render(dashboard.collect())
     assert "MeetRecord" in local
+
+
+def test_publish_variant_has_no_fund_programmes():
+    if not (dashboard.DATA / "scores" / "Pumpwise.json").exists():
+        pytest.skip("no scores")
+    html = dashboard.render(dashboard.collect(), publish=True)
+    for n in dashboard.FUND_PROGRAMMES:
+        assert n not in html, n

@@ -155,6 +155,10 @@ def publishable(data: dict) -> dict:
     return strip_portfolio(d)
 
 
+# Fund programme names kept off the online page (user, 2026-11-19).
+FUND_PROGRAMMES = ["TorQLabs"]
+
+
 def portfolio_names() -> list:
     """Portfolio company names (and short forms) from the fund research, longest first."""
     f = _load(DATA / "research" / "_fund.json", {"portfolio": [], "overlaps": []})
@@ -175,9 +179,11 @@ def strip_portfolio(d: dict) -> dict:
     """Online page: no portfolio companies, overlap details or fund-research evidence."""
     pat = re.compile(r"(?<![\w&])(" + "|".join(re.escape(n) for n in portfolio_names()) + r")(?![\w])")
 
+    prog = re.compile(r"(?<![\w])(" + "|".join(re.escape(n) for n in FUND_PROGRAMMES) + r")(?![\w])")
+
     def scrub(x):
         if isinstance(x, str):
-            return pat.sub("[portfolio company]", x)
+            return prog.sub("[fund programme]", pat.sub("[portfolio company]", x))
         if isinstance(x, list):
             return [scrub(i) for i in x]
         if isinstance(x, dict):
