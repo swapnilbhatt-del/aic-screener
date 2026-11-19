@@ -223,9 +223,14 @@ def band_for(total: float, gates: Dict[str, dict], material: bool, cfg: dict) ->
     band = "call" if total >= t["call"] else "partner_review" if total >= t["pass"] else "pass"
     why.append(f"score band: {band}")
     flags = [k for k, x in gates.items() if x["state"] == "flag"]
-    if flags:
-        band = "partner_review"
-        why.append(f"open flag(s) {', '.join(flags)}: partner review (rubric s5: 'or any score where a Flag is open')")
+    if flags and band == "call":
+        band = cfg.get("flag_at_call_band", "partner_review")
+        why.append(f"open flag(s) {', '.join(flags)}: lowered to partner review")
+    elif flags and band == "pass":
+        band = cfg.get("flag_below_pass", "pass")
+        why.append(f"open flag(s) {', '.join(flags)}: pass recommendation with flag attached; partner decides")
+    elif flags:
+        why.append(f"open flag(s) {', '.join(flags)}: partner review")
     if material and band == "call":
         band = cfg["integrity_cap"]["max_band"]
         why.append("integrity cap: material contradiction unresolved")
@@ -344,7 +349,7 @@ def normalise_t2(resolved: dict, src: Sources, cfg: dict, proposed: Dict[str, in
             if new == 0:
                 resolved["T2"]["unknown"] = True   # no sub-part disclosed: missing data, scored 0
             adj.append({"criterion": "T2", "from": proposed["T2"], "to": new,
-                        "rule": f"t2_rules.cac_by_channel_min_channels={n} (provisional): {sp['normalised']}"})
+                        "rule": f"t2_rules.cac_by_channel_min_channels={n} {sp['normalised']}"})
             proposed["T2"] = new
     return adj
 
@@ -374,9 +379,9 @@ def main(companies: List[str]) -> List[dict]:
     for co in companies:
         r = score(co)
         (OUT / f"{co}.json").write_text(json.dumps(r, indent=1, ensure_ascii=False))
-        if not conn.execute("SELECT 1 FROM outcomes WHERE company=? AND model_band=? AND human_decision IS NULL",
-                            (co, r["band"])).fetchone():
-            record_outcome(conn, r)
+        # One undecided outcome per company: refresh the model's view; never touch a human decision.
+        conn.execute("DELETE FROM outcomes WHERE company=? AND human_decision IS NULL", (co,))
+        record_outcome(conn, r)
         results.append(r)
     conn.commit()
     return results

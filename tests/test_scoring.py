@@ -178,6 +178,12 @@ def test_close_call_inclusive(total, expected):
     assert scoring.close_call(total, config.load()) == expected
 
 
+def test_flag_below_pass_stays_pass_with_flag():
+    s = {k: 1 for k in CRITERIA}
+    _, _, _, band, g = run(raw(s, t2=(True, False, False, False, False)), FakeSrc(stage="Series A"))
+    assert band == "pass" and g["G3"]["state"] == "flag"
+
+
 def test_low_band():
     s = {k: 1 for k in CRITERIA}
     _, _, _, band, _ = run(raw(s, t2=(True, False, False, False, False)))

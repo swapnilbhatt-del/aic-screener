@@ -64,7 +64,7 @@ public_sectors: [fintech, deeptech, consumer tech, consumer brands]   # G2(c) us
 pre_seed_stages: [pre-seed, seed]                                     # G3
 
 # T2 sub-part rules applied in code for consistency across scorers.
-# PROVISIONAL (2026-11-19): literal reading of "CAC by channel", pending user confirmation.
+# Literal reading of "CAC by channel" (confirmed by user 2026-11-19).
 t2_rules:
   cac_by_channel_min_channels: 2   # present only if CAC figures are disclosed for >= 2 named channels
 
@@ -74,6 +74,7 @@ anchor_rules:
   M1_max_if_market_or_assumption_check_fails: 1
 
 flag_at_call_band: partner_review   # score >= call with any open gate Flag
+flag_below_pass: pass   # user 2026-11-19: a flagged company below the pass threshold stays 'pass', flag shown; partner decides
 
 arithmetic:
   tolerance: 0.05
