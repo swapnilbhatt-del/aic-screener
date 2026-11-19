@@ -1,0 +1,143 @@
+{
+ "generated": "2026-11-19",
+ "cache_files": {
+  "CAPilot.json": {
+   "sha256": "ec86564b997e6d34a4d4e93df50f648b6dfcf04d8eff8cd640d8cb7eb1c2c7d0",
+   "findings": 16,
+   "competitors": 10,
+   "funded_competitors": 4,
+   "conflicts": 2,
+   "not_found": 6
+  },
+  "CareCorner.json": {
+   "sha256": "9f02a4fc7f4385a17e7666bf3429ea3ff14ac30c80fbca761eafef8b5de23356",
+   "findings": 22,
+   "competitors": 8,
+   "funded_competitors": 8,
+   "conflicts": 1,
+   "not_found": 5
+  },
+  "EarnWise.json": {
+   "sha256": "1bd974b0c91b393d28102932ce290fa01f1b69155b758cd22250991ca5ee4839",
+   "findings": 16,
+   "competitors": 3,
+   "funded_competitors": 3,
+   "conflicts": 2,
+   "not_found": 6
+  },
+  "GrainKind.json": {
+   "sha256": "95fc2484b511cb712702f086e8b937199ae2d603e7e7d4f309865cc70b24b873",
+   "findings": 19,
+   "competitors": 8,
+   "funded_competitors": 8,
+   "conflicts": 3,
+   "not_found": 5
+  },
+  "Pumpwise.json": {
+   "sha256": "7b3d24803f774b2ee9a7dd0876494d4051127ae85afed4d25e42e7aedf044e65",
+   "findings": 13,
+   "competitors": 6,
+   "funded_competitors": 3,
+   "conflicts": 2,
+   "not_found": 5
+  },
+  "RentRoute.json": {
+   "sha256": "e023faf0581b13f2d5d602cc403fa3b1972a9861250a0e1b7d8f1a48d0ea3c27",
+   "findings": 16,
+   "competitors": 7,
+   "funded_competitors": 2,
+   "conflicts": 2,
+   "not_found": 7
+  },
+  "Settlr.json": {
+   "sha256": "82e303008e380dc42545bd3733f80bcf7ccf959db88747656f86cd5e595f630e",
+   "findings": 15,
+   "competitors": 8,
+   "funded_competitors": 5,
+   "conflicts": 1,
+   "not_found": 6
+  },
+  "StockSathi.json": {
+   "sha256": "27d93f97be9e360e680b3bf1a8e84968794206d23a649e8122f5920628a930f5",
+   "findings": 14,
+   "competitors": 6,
+   "funded_competitors": 5,
+   "conflicts": 2,
+   "not_found": 7
+  },
+  "Talkbook.json": {
+   "sha256": "084fa1549b8c4f708eb886324ee4ecff19198d55fe92f0ad9453b1bf75d254e5",
+   "findings": 16,
+   "competitors": 9,
+   "funded_competitors": 8,
+   "conflicts": 2,
+   "not_found": 6
+  },
+  "Yatrika.json": {
+   "sha256": "2846aa8023acf60d7c363d25d395a83576dfc1384f83ca4b1575f3b944a0767c",
+   "findings": 16,
+   "competitors": 9,
+   "funded_competitors": 9,
+   "conflicts": 1,
+   "not_found": 4
+  },
+  "_fund.json": {
+   "sha256": "d39e8cfb94a6dcee7df3e33a0be1c51cb688b2b8adbefa5b4379d861da96206b",
+   "findings": 35,
+   "competitors": 0,
+   "funded_competitors": 0,
+   "conflicts": 7,
+   "not_found": 5
+  }
+ },
+ "spot_check_2026-11-19": [
+  {
+   "company": "CAPilot",
+   "source": "https://ai.icai.org/usecases_details.php?id=320",
+   "claim": "NoticeAI on ICAI AI portal drafts IT/GST notice replies",
+   "result": "confirmed"
+  },
+  {
+   "company": "Talkbook",
+   "source": "https://inc42.com/buzz/convin-bags-6-5-mn-to-help-enterprises-with-sales-intelligence-solutions",
+   "claim": "Convin USD 6.5M Series A, Aug 2024, India Quotient + JSW Ventures",
+   "result": "confirmed"
+  },
+  {
+   "company": "Pumpwise",
+   "source": "https://techcrunch.com/2025/03/10/infinite-uptime-bags-35m-to-help-factories-optimize-equipment-usage",
+   "claim": "Infinite Uptime USD 35M Series C, predictive maintenance, India-based",
+   "result": "confirmed"
+  },
+  {
+   "company": "Pumpwise",
+   "source": "MoSPI ASI 2024-25 press note (PDF)",
+   "claim": "2.67 lakh registered establishments; TN 41,221, GJ 33,084, MH 27,379",
+   "result": "confirmed (parsed locally)"
+  },
+  {
+   "company": "GrainKind",
+   "source": "https://tataconsumer.com/news/tata-consumer-products-acquire-kottaram-agro-foods-owner-brand-soulfull",
+   "claim": "Tata acquires Soulfull, millet cereals/snacks/muesli",
+   "result": "confirmed; page gives no price (finding does not claim one from it)"
+  },
+  {
+   "company": "Yatrika",
+   "source": "https://wttc.org/news/indias-travel-and-tourism-sector-shows-strong-recovery-with-domestic-tourism-leading-the-way",
+   "claim": "Domestic visitor spend INR 14.64 trillion in 2023",
+   "result": "confirmed"
+  },
+  {
+   "company": "EarnWise",
+   "source": "https://rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx?prid=54187",
+   "claim": "Only regulated/permitted entities may lend; no pool accounts",
+   "result": "confirmed"
+  },
+  {
+   "company": "StockSathi",
+   "source": "https://telanganatoday.com/qwipo-set-to-disrupt-indian-retail-digitally",
+   "claim": "Qwipo B2B in Telangana tier-2/3 towns, 11,000+ retailers (Feb 2022)",
+   "result": "confirmed"
+  }
+ ]
+}

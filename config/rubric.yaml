@@ -51,7 +51,7 @@ integrity_cap:
   # Only contradictions between sources trigger the cap; internal arithmetic errors are reported, not capped.
   trigger: cross_source_contradiction
   sources: [deck, form, public_record]
-  material_fields: [traction, revenue, team, credentials, raise]
+  material_fields: [traction, revenue, team, credentials, raise, credit_structure]   # credit_structure added by user 2026-11-19
   max_band: partner_review   # can only lower a band, never raise one
 
 flag_at_call_band: partner_review   # score >= call with any open gate Flag

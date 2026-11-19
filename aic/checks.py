@@ -529,7 +529,7 @@ def specs(r: Runner):
                   lambda: Input(**_txt(r.ctx, "credit_funding", "deck", "own capital")),
                   lambda: Input(**_txt(r.ctx, "credit_funding", "form", "NBFC partner")),
                   "FAIL", "Deck: credit funded from own capital, NBFC partnership 'in discussion'. Form: credit provided through an NBFC partner, company takes first-loss risk, not registered as an NBFC.",
-                  material_field=None)
+                  material_field="credit_structure")
 
     if co == "Talkbook":
         r.formula("mrr_seats_deck", "Deck MRR = 340 seats x INR 500", I, lambda: g("deck MRR", "mrr_inr", "deck"),

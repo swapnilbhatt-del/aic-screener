@@ -178,3 +178,10 @@ def test_reference_script_fully_reconciled():
     checks.main()
     rows, extra, _ = reference_reconcile.reconcile()
     assert len(rows) == 34 and all(r["agree"] for r in rows)
+
+
+@seed
+def test_credit_structure_is_material_per_config(results):
+    from aic import config
+    assert "credit_structure" in config.load()["integrity_cap"]["material_fields"]
+    assert results[("StockSathi", "credit_funding")].material_field == "credit_structure"
