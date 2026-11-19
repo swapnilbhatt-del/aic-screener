@@ -1,0 +1,10 @@
+Subject: All In Capital: 30 minutes on $company
+---
+[EDIT: greeting and your own wording] Hi $founder_first,
+
+[EDIT: one or two sentences of your own about why you'd like to talk]
+
+Would one of these 30-minute slots (IST) work?
+$slots
+
+$signature

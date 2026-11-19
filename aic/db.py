@@ -164,6 +164,53 @@ CREATE TRIGGER IF NOT EXISTS corrections_no_delete
 BEFORE DELETE ON corrections
 BEGIN SELECT RAISE(ABORT, 'corrections are append-only'); END;
 
+-- Outreach threads (Stage 7). One thread per first email; follow-ups link to it.
+CREATE TABLE IF NOT EXISTS threads (
+    id              INTEGER PRIMARY KEY,
+    company         TEXT NOT NULL,
+    root_outbox_id  INTEGER NOT NULL UNIQUE REFERENCES outbox(id),
+    status          TEXT NOT NULL DEFAULT 'awaiting_reply' CHECK (status IN ('awaiting_reply', 'replied', 'closed')),
+    followups_sent  INTEGER NOT NULL DEFAULT 0 CHECK (followups_sent BETWEEN 0 AND 2),
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS thread_messages (
+    thread_id  INTEGER NOT NULL REFERENCES threads(id),
+    outbox_id  INTEGER NOT NULL UNIQUE REFERENCES outbox(id)
+);
+
+-- Founder replies are untrusted data: stored and labelled, never executed.
+CREATE TABLE IF NOT EXISTS replies (
+    id             INTEGER PRIMARY KEY,
+    thread_id      INTEGER NOT NULL REFERENCES threads(id),
+    received_at    TEXT NOT NULL,
+    from_addr      TEXT NOT NULL,
+    body           TEXT NOT NULL,
+    classification TEXT NOT NULL CHECK (classification IN ('yes', 'no', 'reschedule', 'unclear')),
+    classifier     TEXT NOT NULL,
+    confirmed_by   TEXT,
+    confirmed_at   TEXT,
+    action         TEXT CHECK (action IN ('propose_slots', 'close_thread', 'hand_to_partner')),
+    actioned_at    TEXT
+);
+
+CREATE TRIGGER IF NOT EXISTS replies_no_unclear_need_human
+BEFORE UPDATE OF action ON replies
+WHEN NEW.action IS NOT NULL AND NEW.classification IN ('no', 'unclear')
+ AND (NEW.confirmed_by IS NULL OR length(trim(NEW.confirmed_by)) = 0
+      OR lower(trim(NEW.confirmed_by)) IN ('model', 'system', 'auto', 'claude'))
+BEGIN SELECT RAISE(ABORT, 'a "no" or unclear reply needs a named human to confirm before any action'); END;
+
+CREATE TRIGGER IF NOT EXISTS replies_confirmer_human
+BEFORE UPDATE OF confirmed_by ON replies
+WHEN NEW.confirmed_by IS NOT NULL
+ AND lower(trim(NEW.confirmed_by)) IN ('model', 'system', 'auto', 'claude', '')
+BEGIN SELECT RAISE(ABORT, 'confirmation needs a named human'); END;
+
+CREATE TRIGGER IF NOT EXISTS replies_body_immutable
+BEFORE UPDATE OF body, from_addr, received_at ON replies
+BEGIN SELECT RAISE(ABORT, 'reply content is a record and cannot change'); END;
+
 -- Weight-change proposals (Stage 6). Never applied by code; a human edits config/rubric.yaml.
 CREATE TABLE IF NOT EXISTS weight_proposals (
     id             INTEGER PRIMARY KEY,

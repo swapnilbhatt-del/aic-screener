@@ -1,0 +1,8 @@
+Subject: Re: All In Capital: 30 minutes on $company
+---
+[EDIT: your own short follow-up] Hi $founder_first,
+
+Following up on my note from $sent_date. The slots below are still open (30 minutes, IST):
+$slots
+
+$signature
