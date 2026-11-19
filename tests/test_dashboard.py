@@ -61,3 +61,14 @@ def test_publish_variant_follows_page_contract():
     assert ':root:not([data-theme="light"])' in html and ':root[data-theme="dark"]' in html
     assert "max(16px,env(safe-area-inset-left,0px))" in html
     assert html.count("</script") == 2
+
+
+@pytest.mark.skipif(not (dashboard.DATA / "scores" / "Pumpwise.json").exists(), reason="no scores")
+def test_publish_variant_has_no_backtest():
+    html = dashboard.render(dashboard.collect(), publish=True)
+    d = json.loads(re.search(r'<script type="application/json" id="data">(.*?)</script>', html, re.S).group(1))
+    assert d["backtest"] is None
+    # Passed memo companies and the decisions appear only in the backtest. (Invested ones such as Wint, Giva,
+    # SuperK, Jai Kisan may appear via the fund's public portfolio in research; that is public information.)
+    for name in ("Petalry", "HopBox", "CampusCredit", "AeroDrop", "Coinlane", "Prepnest", "INVESTED", "PASSED"):
+        assert name not in html, name

@@ -151,6 +151,7 @@ def publishable(data: dict) -> dict:
             for i in x["inputs"]:
                 i["pdf"] = ""
     d["reports"] = []
+    d["backtest"] = None   # names real memo companies with the fund's decisions; kept off the online page
     return d
 
 
