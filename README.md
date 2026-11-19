@@ -15,6 +15,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m aic.feedback list     # Stage 6: corrections (add / surface / propose)
 .venv/bin/python -m aic.outreach status   # Stage 7: dry-run outreach (approve-email / approve-hold / allow)
 .venv/bin/python -m aic.assurance         # trust & limits, what's missing, time & cost
+.venv/bin/python -m aic.oos status <batch> # out-of-sample test: freeze / decide / status / evaluate (reports/oos_harness.md)
 .venv/bin/python -m aic.dashboard         # dashboard/index.html (local); --site for site/, --artifact for the Claude page
 .venv/bin/python -m pytest -q
 ```

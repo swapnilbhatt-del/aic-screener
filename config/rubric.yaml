@@ -99,6 +99,18 @@ feedback:
   proposal_step: 5               # largest candidate weight move; shrinks (2, then 1) if it would zero a weight. A proposal, never applied
   proposal_offset: largest other criterion in the same group   # keeps group subtotals and the 100 total
 
+oos_test:
+  # PROPOSED bar for trusting the band (Trust & limits page); Kushal to agree or change.
+  min_agree: 8
+  of: 10
+  call_scored_pass_allowed: 0     # no application the partners call may be scored 'pass'
+  agreement:                      # partner decision -> model bands that count as agreeing
+    call: [call]
+    pass: [pass, hold]
+    hold: [hold]
+  no_commitment: [partner_review]  # model band that neither agrees nor disagrees
+  excluded_decisions: [review_more]
+
 routing:
   deeptech_second_call: Aditya
   first_screen_fintech_consumer: Riya

@@ -211,6 +211,42 @@ CREATE TRIGGER IF NOT EXISTS replies_body_immutable
 BEFORE UPDATE OF body, from_addr, received_at ON replies
 BEGIN SELECT RAISE(ABORT, 'reply content is a record and cannot change'); END;
 
+-- Out-of-sample test (after Stage 7). A batch's scores are frozen before partners decide; evaluated once.
+CREATE TABLE IF NOT EXISTS oos_batches (
+    batch      TEXT PRIMARY KEY CHECK (length(trim(batch)) > 0),
+    frozen_at  TEXT NOT NULL,
+    frozen_by  TEXT NOT NULL CHECK (length(trim(frozen_by)) > 0),
+    bar        TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS oos_members (
+    batch      TEXT NOT NULL REFERENCES oos_batches(batch),
+    company    TEXT NOT NULL UNIQUE,
+    band       TEXT NOT NULL,
+    total      REAL NOT NULL,
+    score_json TEXT NOT NULL,
+    score_sha  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS oos_results (
+    batch        TEXT PRIMARY KEY REFERENCES oos_batches(batch),
+    evaluated_at TEXT NOT NULL,
+    result_json  TEXT NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS oos_batches_frozen BEFORE UPDATE ON oos_batches
+BEGIN SELECT RAISE(ABORT, 'a frozen batch cannot change'); END;
+CREATE TRIGGER IF NOT EXISTS oos_batches_keep BEFORE DELETE ON oos_batches
+BEGIN SELECT RAISE(ABORT, 'a frozen batch cannot be deleted'); END;
+CREATE TRIGGER IF NOT EXISTS oos_members_frozen BEFORE UPDATE ON oos_members
+BEGIN SELECT RAISE(ABORT, 'frozen scores cannot change'); END;
+CREATE TRIGGER IF NOT EXISTS oos_members_keep BEFORE DELETE ON oos_members
+BEGIN SELECT RAISE(ABORT, 'frozen scores cannot be deleted'); END;
+CREATE TRIGGER IF NOT EXISTS oos_results_once BEFORE UPDATE ON oos_results
+BEGIN SELECT RAISE(ABORT, 'a batch is evaluated once'); END;
+CREATE TRIGGER IF NOT EXISTS oos_results_keep BEFORE DELETE ON oos_results
+BEGIN SELECT RAISE(ABORT, 'results cannot be deleted'); END;
+
 -- Weight-change proposals (Stage 6). Never applied by code; a human edits config/rubric.yaml.
 CREATE TABLE IF NOT EXISTS weight_proposals (
     id             INTEGER PRIMARY KEY,

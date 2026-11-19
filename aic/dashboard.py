@@ -50,8 +50,12 @@ def collect() -> dict:
     cfg = config.load()
     conn = db.connect()
     fund = _load(DATA / "research" / "_fund.json", {"overlaps": []})
+    from . import oos
+    blinded = oos.blinded_companies(conn)
     companies = []
-    for co in COMPANIES:
+    for co in COMPANIES + sorted(p.stem for p in (DATA / "scores").glob("*.json") if p.stem not in COMPANIES):
+        if co in blinded:
+            continue   # out-of-sample test: partners decide before seeing the screener's view
         sc = _load(DATA / "scores" / f"{co}.json")
         if not sc:
             continue
@@ -128,7 +132,7 @@ def collect() -> dict:
     return {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "config_version": cfg.get("version"),
             "thresholds": cfg["thresholds"], "groups": {g: sum(cfg["criteria"][k]["weight"] for k in ks)
                                                          for g, ks in cfg["groups"].items()},
-            "companies": companies, "backtest": backtest, "assurance": assurance.build(),
+            "companies": companies, "blinded": sorted(blinded), "backtest": backtest, "assurance": assurance.build(),
             "reports": sorted(p.name for p in (ROOT / "reports").glob("stage*.md")) + ["trust_and_limits.md", "requirements_audit.md"]}
 
 
@@ -385,6 +389,8 @@ function chart(list){const css=getComputedStyle(document.documentElement);const 
   return el("div",{class:"chart"},leg,svg);}
 
 function overview(){const v=el("div");const list=[...D.companies].sort((a,b)=>b.total-a.total);
+  if(D.blinded&&D.blinded.length)v.append(el("section",{class:"card"},el("h2",{},"Blinded for the out-of-sample test"),
+    el("p",{class:"muted"},D.blinded.length+" application(s) are hidden until the partners record their decisions: "+D.blinded.join(", ")+". Their scores are frozen and will be compared after every decision is in.")));
   v.append(el("section",{class:"card"},el("h2",{},"Applications"),chart(list)));
   const t=el("table",{},el("thead",{},el("tr",{},...["Company","Sector","Total","Founder","Path","Recommendation","Gates not clear","Integrity cap","Close call","Discrepancies","Human decision"].map(h=>el("th",{},h)))));
   const tb=el("tbody");for(const c of list){const g=c.gates.filter(x=>x.state!=="clear").map(x=>x.id+" "+x.state).join(", ")||"none";

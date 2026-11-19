@@ -1,7 +1,7 @@
 # Requirements audit
 
 Date: 2026-11-19. Every requirement in (A) the build brief given at the start of the project and (B) the case
-brief `MESA_T2_Case 03_All in Capital.pdf`, with where it is met. Tests: 359 passed.
+brief `MESA_T2_Case 03_All in Capital.pdf`, with where it is met. Tests: 376 passed.
 
 Status: **Met** = built and tested. **Partly** = built, with a limit stated. **By design** = deliberately limited by a hard constraint.
 
@@ -75,7 +75,7 @@ Status: **Met** = built and tested. **Partly** = built, with a limit stated. **B
 
 ## Open items
 
-1. **Out-of-sample test:** score the next 10 applications blind before the partners decide. The Stage 5 backtest is in-sample.
+1. **Out-of-sample test:** harness built (`aic/oos.py`, `reports/oos_harness.md`): freeze, blind, decide, evaluate once against the proposed bar. Needs the next batch of applications and partner decisions to run; the Stage 5 backtest remains in-sample until then.
 2. **Sign-off:** Kushal to agree the trust terms (or set his own bar).
 3. **Partner review time:** time it on the first real batch to finish the 19-days comparison.
 4. **Live sending and booking:** a mailbox and calendar connection is out of scope while hard constraint 1 and dry-run apply. A change would need your explicit decision.

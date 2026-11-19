@@ -50,3 +50,7 @@ The system scores inbound applications, shows evidence for every claim, and reco
 - `aic/`: package. `tests/`: pytest. `reports/`: one run report per stage. `data/` (gitignored): SQLite DB.
 
 Run tests: `.venv/bin/python -m pytest -q`
+
+## Out-of-sample test
+
+`aic/oos.py`: freeze a new batch's scores (snapshot + hash, append-only) before partners decide; frozen companies are hidden from the dashboard; decisions via `oos decide` (named human, DB-enforced); `oos evaluate` runs once, only after every decision is recorded after the freeze. Never record decisions on a partner's behalf. The bar in `config/rubric.yaml` → `oos_test` is a proposal for Kushal.
