@@ -48,3 +48,16 @@ def test_every_company_has_all_panels():
         for cr in c["criteria"]:
             for e in cr["evidence"]:
                 assert e["cite"] or e["url"], (c["company"], cr["id"])
+
+
+@pytest.mark.skipif(not (dashboard.DATA / "scores" / "Pumpwise.json").exists(), reason="no scores")
+def test_publish_variant_follows_page_contract():
+    html = dashboard.render(dashboard.collect(), publish=True)
+    head = html[:8192]
+    assert "<title>AIC Screener</title>" in head
+    for bad in ("<!doctype", "<html", "<head>", "<body>", "</body>", "Content-Security-Policy", 'id="theme"',
+                "localStorage", ".pdf#page"):
+        assert bad not in html, bad
+    assert ':root:not([data-theme="light"])' in html and ':root[data-theme="dark"]' in html
+    assert "max(16px,env(safe-area-inset-left,0px))" in html
+    assert html.count("</script") == 2

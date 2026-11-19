@@ -131,15 +131,60 @@ def collect() -> dict:
             "reports": sorted(p.name for p in (ROOT / "reports").glob("stage*.md"))}
 
 
-def render(data: dict) -> str:
+PUBLISH_HEAD = """<title>AIC Screener</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+"""
+
+
+def publishable(data: dict) -> dict:
+    """Variant for an online page: no links to local files (source PDFs, reports)."""
+    d = json.loads(json.dumps(data))
+    for c in d["companies"]:
+        for cr in c["criteria"]:
+            for e in cr["evidence"]:
+                e["pdf"] = ""
+        for g in c["gates"]:
+            for e in g["evidence"]:
+                e["pdf"] = ""
+        for x in c["discrepancies"]:
+            x["stated_pdf"] = ""
+            for i in x["inputs"]:
+                i["pdf"] = ""
+    d["reports"] = []
+    return d
+
+
+def render(data: dict, publish: bool = False) -> str:
+    if publish:
+        data = publishable(data)
     payload = json.dumps(data, ensure_ascii=False).replace("<", "\\u003c").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
-    return TEMPLATE.replace("__DATA__", payload)
+    html = TEMPLATE.replace("__DATA__", payload)
+    if publish:
+        # The artifact host supplies doctype/head/body and the theme; keep page content, style and scripts.
+        head_end = html.index("<style>")
+        html = PUBLISH_HEAD + html[head_end:]
+        html = html.replace("</style></head>\n<body>", "</style>").replace("</script></body></html>", "</script>")
+        html = re.sub(r'<span class="meta">Theme: <button id="theme".*?</button></span>', "", html, flags=re.S)
+        html = re.sub(r"// ---- theme toggle.*?\}\)\(\);\n", "", html, flags=re.S)
+        html = html.replace("b.addEventListener(\"click\",()=>{i=(i+1)%3;apply();render();});apply();})();", "")
+        html = html.replace("header{padding:16px 24px;", "header{padding-block:16px;padding-left:max(24px,env(safe-area-inset-left,0px));padding-right:max(24px,env(safe-area-inset-right,0px));")
+        html = html.replace("main{display:grid;grid-template-columns:260px minmax(0,1fr);gap:16px;padding:0 24px 32px}",
+                            "main{display:grid;grid-template-columns:260px minmax(0,1fr);gap:16px;padding-block:0 32px;padding-left:max(24px,env(safe-area-inset-left,0px));padding-right:max(24px,env(safe-area-inset-right,0px))}")
+        html = html.replace("@media (max-width:900px){main{grid-template-columns:minmax(0,1fr);padding:0 16px 24px}.notice{margin-left:16px;margin-right:16px}header{padding:12px 16px}",
+                            "@media (max-width:900px){main{grid-template-columns:minmax(0,1fr);padding-block:0 24px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}.notice{margin-left:max(16px,env(safe-area-inset-left,0px));margin-right:max(16px,env(safe-area-inset-right,0px))}header{padding-block:12px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}")
+        html = html.replace("nav{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px;align-self:start;position:sticky;top:8px}",
+                            "nav{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px;align-self:start;position:sticky;top:calc(env(safe-area-inset-top,0px) + 8px)}")
+    return html
 
 
-def build() -> Path:
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(render(collect()))
-    return OUT
+PUBLISH_OUT = ROOT / "dashboard" / "publish.html"
+
+
+def build(publish: bool = False) -> Path:
+    out = PUBLISH_OUT if publish else OUT
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(render(collect(), publish=publish))
+    return out
 
 
 TEMPLATE = r"""<!doctype html>
@@ -149,7 +194,7 @@ TEMPLATE = r"""<!doctype html>
 <style>
 :root{color-scheme:light;--bg:#f6f6f4;--surface:#fcfcfb;--line:#e4e3df;--text:#0b0b0b;--text2:#52514e;--muted:#77756f;
 --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--good:#0ca30c;--warn:#fab219;--serious:#ec835a;--crit:#d03b3b;--link:#1c5cab;--chip:#f0efec}
-@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){color-scheme:dark;--bg:#121211;--surface:#1a1a19;--line:#33332f;
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#121211;--surface:#1a1a19;--line:#33332f;
 --text:#f0efec;--text2:#c3c2b7;--muted:#9a988f;--s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--link:#86b6ef;--chip:#2a2a27}}
 :root[data-theme="dark"]{color-scheme:dark;--bg:#121211;--surface:#1a1a19;--line:#33332f;--text:#f0efec;--text2:#c3c2b7;--muted:#9a988f;
 --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--link:#86b6ef;--chip:#2a2a27}
@@ -275,7 +320,7 @@ function companyView(c){const v=el("div");
       el("div",{},"Routing"),el("div",{},...c.routing.map(r=>el("div",{},r)))));
   v.append(head);
   const tabs=[["score","Score card"],["gates","Gates"],["disc","Discrepancies ("+c.discrepancies.filter(d=>d.status==="FAIL").length+")"],["research","Research"],["history","Decision history"]];
-  const body=el("section",{class:"card"});const tb=el("div",{class:"tabs",role:"tablist"});let sel=sessionStorage.getItem?.("aic-tab")||"score";
+  const body=el("section",{class:"card"});const tb=el("div",{class:"tabs",role:"tablist"});let sel="score";try{sel=sessionStorage.getItem("aic-tab")||"score";}catch(e){}
   function show(k){sel=k;try{sessionStorage.setItem("aic-tab",k);}catch(e){}for(const b of tb.children)b.setAttribute("aria-selected",String(b.dataset.k===k));body.replaceChildren(tb,renderTab(c,k));}
   for(const [k,n] of tabs){const b=el("button",{role:"tab",on:{click:()=>show(k)}},n);b.dataset.k=k;tb.append(b);}show(tabs.some(t=>t[0]===sel)?sel:"score");v.append(body);return v;}
 
@@ -342,4 +387,5 @@ render();
 """
 
 if __name__ == "__main__":
-    print(build())
+    import sys
+    print(build(publish="--publish" in sys.argv))
