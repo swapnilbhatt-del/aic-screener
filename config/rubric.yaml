@@ -54,6 +54,25 @@ integrity_cap:
   material_fields: [traction, revenue, team, credentials, raise, credit_structure]   # credit_structure added by user 2026-11-19
   max_band: partner_review   # can only lower a band, never raise one
 
+# User decisions 2026-11-19 (Stage 3 checkpoint)
+founder_evidence_cap:
+  criteria: [F1, F2, F3, F4]
+  max_without_external_support: 4   # anchor 5 needs evidence checkable from an outside source
+public_record_contradictions:
+  feeds: [M1, M2]                   # do not trigger the integrity cap
+public_sectors: [fintech, deeptech, consumer tech, consumer brands]   # G2(c) uses the public line (rubric section 7)
+pre_seed_stages: [pre-seed, seed]                                     # G3
+
+# T2 sub-part rules applied in code for consistency across scorers.
+# PROVISIONAL (2026-11-19): literal reading of "CAC by channel", pending user confirmation.
+t2_rules:
+  cac_by_channel_min_channels: 2   # present only if CAC figures are disclosed for >= 2 named channels
+
+# Rubric anchors enforced in code (a model score that breaks them is rejected, not silently changed)
+anchor_rules:
+  S2_max_if_material_contradiction: 1
+  M1_max_if_market_or_assumption_check_fails: 1
+
 flag_at_call_band: partner_review   # score >= call with any open gate Flag
 
 arithmetic:
@@ -61,7 +80,7 @@ arithmetic:
   check_kinds: [formula, cross_document, assumption_vs_observed]
 
 gates:
-  G1: {name: "Conflict with portfolio", on_hit: hold}
+  G1: {name: "Conflict with portfolio", on_hit: hold, hold_on_strength: [direct]}   # user 2026-11-19: adjacent overlaps shown, not held
   G2: {name: "Category or structure", on_hit: flag}
   G3: {name: "Stage", on_hit: flag}
   G4: {name: "Commitment", on_hit: flag}
