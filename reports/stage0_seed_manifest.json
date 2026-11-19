@@ -1,0 +1,115 @@
+{
+ "generated": "2026-11-19",
+ "files": [
+  {
+   "path": "seed/applications/CAPilot/deck.pdf",
+   "sha256": "b8eafef6c1db9f265e741fa09064454f19f2bed799a501aaa343616a00e8793d",
+   "pages": 9
+  },
+  {
+   "path": "seed/applications/CAPilot/form.pdf",
+   "sha256": "a87039aa34d3295ca31735fe3d0d61309b68fe4556e850acdc49c6139d3717e5",
+   "pages": 2
+  },
+  {
+   "path": "seed/applications/CareCorner/deck.pdf",
+   "sha256": "867505c10ecf978d0411fcae810f54d9fa8975cb3c9fa8dc689dc4cdfa4b0ce7",
+   "pages": 8
+  },
+  {
+   "path": "seed/applications/CareCorner/form.pdf",
+   "sha256": "1abab4728570ad9864173750ef1786888da920eaa1d320d01a662aed56fc429e",
+   "pages": 2
+  },
+  {
+   "path": "seed/applications/EarnWise/deck.pdf",
+   "sha256": "4a2c74092aefa1736d716484dd0e26640d2126811cb721b41e11f897f84b1df2",
+   "pages": 8
+  },
+  {
+   "path": "seed/applications/EarnWise/form.pdf",
+   "sha256": "c55df682fdd6d1d93a4cb2fda23c512df86e6caf993d4d6aa38d7d394e842bc6",
+   "pages": 2
+  },
+  {
+   "path": "seed/applications/GrainKind/deck.pdf",
+   "sha256": "562a00d54697756860162dd6574a565ec7ff387509dde03150ede9febbbb36e7",
+   "pages": 10
+  },
+  {
+   "path": "seed/applications/GrainKind/form.pdf",
+   "sha256": "d095e3f0176713959c8a8ae15f62d4880190d3fd0e79e558aeb3b2a960b71d99",
+   "pages": 2
+  },
+  {
+   "path": "seed/applications/Pumpwise/deck.pdf",
+   "sha256": "79603014b0ecd10345aea65a13e18ba936980b59eee7edad6eb1d43f9eda4600",
+   "pages": 11
+  },
+  {
+   "path": "seed/applications/Pumpwise/form.pdf",
+   "sha256": "3d32ebe0654faaa753f0dcbb54afd4cb094ddf6b47593a4af33b58d0cfcfa732",
+   "pages": 2
+  },
+  {
+   "path": "seed/applications/RentRoute/deck.pdf",
+   "sha256": "c28cc8a5e4d0dd005646edbc29ffbffadf0b58e967439a54ddc5da75d60f33e4",
+   "pages": 9
+  },
+  {
+   "path": "seed/applications/RentRoute/form.pdf",
+   "sha256": "b6513ef0bcc48dc089c5b5a3e022a128decfb0f7abd6586811255800b1332580",
+   "pages": 2
+  },
+  {
+   "path": "seed/applications/Settlr/deck.pdf",
+   "sha256": "322f96f83b329950dd98ae173f2c20855c3e9ff8773ef7131bdff527ea0e1955",
+   "pages": 9
+  },
+  {
+   "path": "seed/applications/Settlr/form.pdf",
+   "sha256": "4409821bfb67297d91f2f7ffade0f2567d2b7878a5b805bdefaedb63e5a78d9d",
+   "pages": 2
+  },
+  {
+   "path": "seed/applications/StockSathi/deck.pdf",
+   "sha256": "6fb980454ae2d453248cd3ed7f6a48541f484b3da21dbdfff10153edf205742d",
+   "pages": 11
+  },
+  {
+   "path": "seed/applications/StockSathi/form.pdf",
+   "sha256": "69dd73eed837a36cef7150befeb4f31fbfadfd43c81c347b21f6b848724b59aa",
+   "pages": 3
+  },
+  {
+   "path": "seed/applications/Talkbook/deck.pdf",
+   "sha256": "8d7ece23c991e3c88d9b4fcee8a74ebdc5810158fcf47329a05ff102f653a18a",
+   "pages": 10
+  },
+  {
+   "path": "seed/applications/Talkbook/form.pdf",
+   "sha256": "754d15f0b2971e8e978ad5c337f5092dd2f9744ea63a998e91cf15add54b54e7",
+   "pages": 2
+  },
+  {
+   "path": "seed/applications/Yatrika/deck.pdf",
+   "sha256": "563d5c018beb8c0fba227b9a05a9bdb309b439ee5be87f2f800a2596f59ff237",
+   "pages": 10
+  },
+  {
+   "path": "seed/applications/Yatrika/form.pdf",
+   "sha256": "d48e3eb086b67efdcdd954a405390b36e6fecec2f19245e1041a1d19896d0e8f",
+   "pages": 2
+  },
+  {
+   "path": "seed/memos/deal_memos.pdf",
+   "sha256": "5b35c1d1737cd6e48cade5662977076fa83b216f78a1ae399763a2fc0e4be2aa",
+   "pages": 6
+  },
+  {
+   "path": "seed/notes/partner_meeting_notes.pdf",
+   "sha256": "a5ec113025e5f00e6d8266505edc4d07ed3cc24db74fc4f26bf8dd6a538dd9a1",
+   "pages": 5
+  }
+ ]
+}

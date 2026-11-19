@@ -1,0 +1,162 @@
+"""SQLite schema. The approval gate and the human-decision gate are enforced by triggers,
+so no code path (including a buggy one) can send, hold, or decide without a recorded human approval."""
+import sqlite3
+from pathlib import Path
+from typing import Optional, Union
+
+ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_DB = ROOT / "data" / "aic.db"
+
+SCHEMA = """
+PRAGMA foreign_keys = ON;
+
+-- Append-only record of human approvals. One row authorises one action on one target.
+CREATE TABLE IF NOT EXISTS approvals (
+    id          INTEGER PRIMARY KEY,
+    action_type TEXT NOT NULL CHECK (action_type IN ('send_email', 'create_calendar_hold')),
+    target_id   INTEGER NOT NULL,
+    approved_by TEXT NOT NULL CHECK (length(trim(approved_by)) > 0
+                                     AND lower(trim(approved_by)) NOT IN ('model', 'system', 'auto', 'claude')),
+    approved_at TEXT NOT NULL DEFAULT (datetime('now')),
+    note        TEXT,
+    revoked_at  TEXT
+);
+
+CREATE TRIGGER IF NOT EXISTS approvals_no_delete
+BEFORE DELETE ON approvals
+BEGIN SELECT RAISE(ABORT, 'approvals are append-only'); END;
+
+CREATE TRIGGER IF NOT EXISTS approvals_only_revoke
+BEFORE UPDATE ON approvals
+WHEN NEW.id IS NOT OLD.id OR NEW.action_type IS NOT OLD.action_type OR NEW.target_id IS NOT OLD.target_id
+  OR NEW.approved_by IS NOT OLD.approved_by OR NEW.approved_at IS NOT OLD.approved_at
+  OR NEW.note IS NOT OLD.note OR OLD.revoked_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'approvals can only be revoked, once'); END;
+
+-- Placeholder addresses a human has allowed for test sends. Empty by default.
+CREATE TABLE IF NOT EXISTS allowed_recipients (
+    address  TEXT PRIMARY KEY CHECK (address = lower(trim(address)) AND address LIKE '%_@_%'),
+    added_by TEXT NOT NULL CHECK (length(trim(added_by)) > 0
+                                  AND lower(trim(added_by)) NOT IN ('model', 'system', 'auto', 'claude')),
+    added_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS outbox (
+    id          INTEGER PRIMARY KEY,
+    company     TEXT NOT NULL,
+    to_addr     TEXT NOT NULL,
+    subject     TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    kind        TEXT NOT NULL DEFAULT 'outreach' CHECK (kind IN ('outreach', 'follow_up', 'pass_note', 'reply')),
+    status      TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'approved', 'sent', 'cancelled')),
+    approval_id INTEGER REFERENCES approvals(id),
+    dry_run     INTEGER NOT NULL DEFAULT 1 CHECK (dry_run IN (0, 1)),
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    sent_at     TEXT
+);
+
+CREATE TRIGGER IF NOT EXISTS outbox_insert_draft_only
+BEFORE INSERT ON outbox
+WHEN NEW.status <> 'draft' OR NEW.approval_id IS NOT NULL OR NEW.sent_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'outbox rows must be inserted as unapproved drafts'); END;
+
+CREATE TRIGGER IF NOT EXISTS outbox_no_content_change_after_draft
+BEFORE UPDATE ON outbox
+WHEN OLD.status <> 'draft'
+ AND (NEW.to_addr IS NOT OLD.to_addr OR NEW.subject IS NOT OLD.subject OR NEW.body IS NOT OLD.body
+      OR NEW.company IS NOT OLD.company)
+BEGIN SELECT RAISE(ABORT, 'approved or sent email content cannot change'); END;
+
+CREATE TRIGGER IF NOT EXISTS outbox_requires_approval
+BEFORE UPDATE OF status ON outbox
+WHEN NEW.status IN ('approved', 'sent')
+ AND NOT EXISTS (SELECT 1 FROM approvals a
+                 WHERE a.id = NEW.approval_id AND a.action_type = 'send_email'
+                   AND a.target_id = NEW.id AND a.revoked_at IS NULL)
+BEGIN SELECT RAISE(ABORT, 'send blocked: no valid approval recorded for this email'); END;
+
+CREATE TRIGGER IF NOT EXISTS outbox_sent_requires_allowed_recipient
+BEFORE UPDATE OF status ON outbox
+WHEN NEW.status = 'sent'
+ AND NOT EXISTS (SELECT 1 FROM allowed_recipients r WHERE r.address = lower(trim(NEW.to_addr)))
+BEGIN SELECT RAISE(ABORT, 'send blocked: recipient is not an allowed placeholder address'); END;
+
+CREATE TRIGGER IF NOT EXISTS outbox_sent_only_from_approved
+BEFORE UPDATE OF status ON outbox
+WHEN NEW.status = 'sent' AND OLD.status <> 'approved'
+BEGIN SELECT RAISE(ABORT, 'send blocked: email must be approved before it is sent'); END;
+
+CREATE TABLE IF NOT EXISTS calendar_holds (
+    id          INTEGER PRIMARY KEY,
+    company     TEXT NOT NULL,
+    start_at    TEXT NOT NULL,
+    minutes     INTEGER NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'held', 'cancelled')),
+    approval_id INTEGER REFERENCES approvals(id),
+    ics_path    TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TRIGGER IF NOT EXISTS holds_insert_proposed_only
+BEFORE INSERT ON calendar_holds
+WHEN NEW.status <> 'proposed' OR NEW.approval_id IS NOT NULL OR NEW.ics_path IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'calendar holds must be inserted as unapproved proposals'); END;
+
+CREATE TRIGGER IF NOT EXISTS holds_require_approval
+BEFORE UPDATE ON calendar_holds
+WHEN (NEW.status = 'held' OR NEW.ics_path IS NOT NULL)
+ AND NOT EXISTS (SELECT 1 FROM approvals a
+                 WHERE a.id = NEW.approval_id AND a.action_type = 'create_calendar_hold'
+                   AND a.target_id = NEW.id AND a.revoked_at IS NULL)
+BEGIN SELECT RAISE(ABORT, 'calendar hold blocked: no valid approval recorded'); END;
+
+-- Human gate on outcomes: the model recommends, a named human decides.
+CREATE TABLE IF NOT EXISTS outcomes (
+    id                   INTEGER PRIMARY KEY,
+    company              TEXT NOT NULL,
+    model_band           TEXT NOT NULL,
+    model_recommendation TEXT NOT NULL,
+    human_decision       TEXT CHECK (human_decision IN ('call', 'pass', 'hold', 'review_more')),
+    decided_by           TEXT,
+    decided_at           TEXT,
+    reason               TEXT,
+    created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TRIGGER IF NOT EXISTS outcomes_insert_undecided
+BEFORE INSERT ON outcomes
+WHEN NEW.human_decision IS NOT NULL OR NEW.decided_by IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'outcomes are created undecided; a human decides later'); END;
+
+CREATE TRIGGER IF NOT EXISTS outcomes_human_only
+BEFORE UPDATE OF human_decision, decided_by ON outcomes
+WHEN NEW.human_decision IS NOT NULL
+ AND (NEW.decided_by IS NULL OR length(trim(NEW.decided_by)) = 0
+      OR lower(trim(NEW.decided_by)) IN ('model', 'system', 'auto', 'claude')
+      OR NEW.reason IS NULL OR length(trim(NEW.reason)) = 0)
+BEGIN SELECT RAISE(ABORT, 'decision blocked: needs a named human and a one-line reason'); END;
+
+-- Corrections log (Stage 6).
+CREATE TABLE IF NOT EXISTS corrections (
+    id           INTEGER PRIMARY KEY,
+    company      TEXT NOT NULL,
+    sector       TEXT,
+    criterion    TEXT NOT NULL,
+    model_score  INTEGER NOT NULL CHECK (model_score BETWEEN 0 AND 5),
+    human_score  INTEGER NOT NULL CHECK (human_score BETWEEN 0 AND 5),
+    reason       TEXT NOT NULL CHECK (length(trim(reason)) > 0),
+    corrected_by TEXT NOT NULL CHECK (length(trim(corrected_by)) > 0),
+    corrected_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+
+def connect(path: Optional[Union[str, Path]] = None) -> sqlite3.Connection:
+    """Open the DB with foreign keys on and the schema applied. Use ':memory:' in tests."""
+    target = str(path) if path is not None else str(DEFAULT_DB)
+    if target != ":memory:":
+        Path(target).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(target)
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.executescript(SCHEMA)
+    return conn

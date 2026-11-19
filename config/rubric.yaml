@@ -1,0 +1,89 @@
+# Single source of rubric configuration. Loaded by aic/config.py.
+# Origin: reference/AIC_Rubric_v1.md (DRAFT, not yet agreed with Kushal) plus user defaults of 2026-11-19.
+# Do not edit weights or thresholds without partner approval (see CLAUDE.md).
+
+version: "v1-draft"
+
+score_scale: {min: 0, max: 5}
+anchors:
+  5: "evidenced, specific, internally consistent, and checkable from an outside source"
+  3: "specific and plausible, but unverified or partly consistent"
+  1: "claimed without evidence, or contradicted by another part of the file"
+  0: "missing (marked unknown; never skipped or imputed)"
+
+groups:
+  founder: [F1, F2, F3, F4]
+  path: [T1, T2, T3]
+  thesis: [M1, M2, M3]
+  structure: [S1, S2]
+
+criteria:
+  F1: {name: "Earned depth in this problem", weight: 10}
+  F2: {name: "Owns the hardest risk", weight: 10}
+  F3: {name: "Candour and specificity", weight: 10}
+  F4: {name: "Team completeness", weight: 5}
+  T1: {name: "Traction quality", weight: 15}
+  T2:
+    name: "Unit economics and retention disclosed"
+    weight: 15
+    # Each sub-part is worth 1 point on the 0-5 scale; a missing sub-part scores 0.
+    subparts: [repeat_or_cohort, cac_by_channel, gross_margin, payback, ltv_cac]
+  T3: {name: "Path to revenue and milestones", weight: 5}
+  M1: {name: "Market evidence reconciles", weight: 5}
+  M2: {name: "Defensibility and honest competition", weight: 10}
+  M3: {name: "Thesis fit and why now", weight: 5}
+  S1: {name: "Capital structure fits the cheque", weight: 5}
+  S2: {name: "Evidence integrity", weight: 5}
+
+thresholds:
+  call: 70          # >= call -> Call band (from the brief)
+  pass: 55          # <  pass -> Pass recommendation
+  close_call_margin: 5
+  close_call_inclusive: true
+
+pedigree_cap:
+  criterion: F1
+  max_score: 2
+  unless_any_of: [F2, F3]
+  unless_min_score: 3
+
+integrity_cap:
+  # Only contradictions between sources trigger the cap; internal arithmetic errors are reported, not capped.
+  trigger: cross_source_contradiction
+  sources: [deck, form, public_record]
+  material_fields: [traction, revenue, team, credentials, raise]
+  max_band: partner_review   # can only lower a band, never raise one
+
+flag_at_call_band: partner_review   # score >= call with any open gate Flag
+
+arithmetic:
+  tolerance: 0.05
+  check_kinds: [formula, cross_document, assumption_vs_observed]
+
+gates:
+  G1: {name: "Conflict with portfolio", on_hit: hold}
+  G2: {name: "Category or structure", on_hit: flag}
+  G3: {name: "Stage", on_hit: flag}
+  G4: {name: "Commitment", on_hit: flag}
+  G5: {name: "Regulated-lending exposure without credit owner", on_hit: flag}
+
+bands:
+  - {id: hold, label: "Hold", system_may: "Hold and the reason", human: "Kushal resolves the conflict first"}
+  - {id: call, label: "Call", system_may: "Move to call", human: "Kushal sees outcome before any email; Riya reviews draft"}
+  - {id: partner_review, label: "Partner review", system_may: "Review with 2-3 gaps", human: "Partner decides; no email by default"}
+  - {id: pass, label: "Pass recommendation", system_may: "Pass with draft note", human: "Partner decides; nothing auto-rejected"}
+
+routing:
+  deeptech_second_call: Aditya
+  first_screen_fintech_consumer: Riya
+  outcome_gate: Kushal
+
+outreach:
+  dry_run: true
+  slot_days: [Tuesday, Thursday]
+  slot_window: {start: "14:00", end: "18:00", tz: "Asia/Kolkata"}
+  slot_minutes: 30
+  follow_up_after_days: 3
+  max_follow_ups: 2
+  calendar_mode: ics_only
+  # Recipients are held in the DB table allowed_recipients (empty by default), not here.

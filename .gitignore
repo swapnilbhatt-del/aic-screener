@@ -1,0 +1,21 @@
+# Personal data: founder decks, forms, memos, notes. Never commit.
+seed/
+
+# Runtime data: SQLite DB, research cache (contains founder background research), outbox, .ics holds
+data/
+cache/
+outbox/
+
+# Secrets and local overrides
+.env
+.env.*
+config/local.yaml
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated dashboard (embeds founder data)
+dashboard/*.html
