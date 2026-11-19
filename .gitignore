@@ -19,3 +19,6 @@ __pycache__/
 
 # Generated dashboard (embeds founder data)
 dashboard/*.html
+
+# Local tool config
+.claude/
