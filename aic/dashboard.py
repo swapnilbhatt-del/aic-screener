@@ -152,7 +152,49 @@ def publishable(data: dict) -> dict:
                 i["pdf"] = ""
     d["reports"] = []
     d["backtest"] = None   # names real memo companies with the fund's decisions; kept off the online page
-    return d
+    return strip_portfolio(d)
+
+
+def portfolio_names() -> list:
+    """Portfolio company names (and short forms) from the fund research, longest first."""
+    f = _load(DATA / "research" / "_fund.json", {"portfolio": [], "overlaps": []})
+    raw = {p["name"] for p in f.get("portfolio", [])} | {o["portfolio_company"] for o in f.get("overlaps", [])
+                                                         if o.get("portfolio_company")}
+    names = set()
+    for n in raw:
+        for part in re.split(r"\s*/\s*", n):
+            names.add(part.strip())
+            first = part.split()[0] if part.split() else ""
+            if len(part.split()) > 1 and len(first) >= 4 and first[0].isupper() and first not in ("Grid", "Giga", "Spill", "Hectar"):
+                names.add(first)          # e.g. 'Wint', 'Karban', 'PierSight', 'MeetRecord'
+    names |= {"Giva", "GIVA", "Outdoo", "Hectar Global", "Grid OS"}
+    return sorted((n for n in names if n), key=len, reverse=True)
+
+
+def strip_portfolio(d: dict) -> dict:
+    """Online page: no portfolio companies, overlap details or fund-research evidence."""
+    pat = re.compile(r"(?<![\w&])(" + "|".join(re.escape(n) for n in portfolio_names()) + r")(?![\w])")
+
+    def scrub(x):
+        if isinstance(x, str):
+            return pat.sub("[portfolio company]", x)
+        if isinstance(x, list):
+            return [scrub(i) for i in x]
+        if isinstance(x, dict):
+            return {k: scrub(v) for k, v in x.items()}
+        return x
+
+    for c in d["companies"]:
+        c["overlaps"] = []
+        for cr in c["criteria"]:
+            cr["evidence"] = [e for e in cr["evidence"] if not str(e.get("ref", "")).startswith("research:_fund:")]
+        for g in c["gates"]:
+            g["evidence"] = [e for e in g["evidence"] if not str(e.get("ref", "")).startswith("research:_fund:")]
+            if g["id"] == "G1":
+                g["reason"] = ("Direct overlap with a portfolio company (named on the internal dashboard only)"
+                               if g["state"] == "hold" else "No direct portfolio overlap found")
+                g["adjacent"], g["caveat"] = None, None
+    return scrub(d)
 
 
 def render(data: dict, publish: bool = False) -> str:

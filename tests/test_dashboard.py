@@ -72,3 +72,19 @@ def test_publish_variant_has_no_backtest():
     # SuperK, Jai Kisan may appear via the fund's public portfolio in research; that is public information.)
     for name in ("Petalry", "HopBox", "CampusCredit", "AeroDrop", "Coinlane", "Prepnest", "INVESTED", "PASSED"):
         assert name not in html, name
+
+
+@pytest.mark.skipif(not (dashboard.DATA / "research" / "_fund.json").exists(), reason="no fund research")
+def test_publish_variant_has_no_portfolio_references():
+    html = dashboard.render(dashboard.collect(), publish=True)
+    for n in dashboard.portfolio_names():
+        assert not re.search(r"(?<![\w&])" + re.escape(n) + r"(?![\w])", html), n
+    assert "research:_fund" not in html
+    d = json.loads(re.search(r'<script type="application/json" id="data">(.*?)</script>', html, re.S).group(1))
+    for c in d["companies"]:
+        assert c["overlaps"] == []
+        g1 = next(g for g in c["gates"] if g["id"] == "G1")
+        assert g1["adjacent"] is None and not g1["evidence"]
+    # the local dashboard keeps the detail
+    local = dashboard.render(dashboard.collect())
+    assert "MeetRecord" in local
