@@ -26,7 +26,7 @@ The system scores inbound applications, shows evidence for every claim, and reco
 - Do not change the rubric, weights or thresholds without asking. Any change made to improve the backtest must be flagged as overfitting to seed data.
 - If a source is missing or contradictory, say so. Do not fill the gap.
 - `reference/` (draft rubric, prior scores, arithmetic script) are hypotheses to verify, not ground truth.
-- Backtest (Stage 5) must be blind: the scorer never sees memo decisions. Decisions live in a separate file read only after all scores are written. The main session has read the decisions, so blind scoring runs in a fresh agent on redacted, anonymised memo text.
+- Backtest (Stage 5) must be blind: the scorer never sees memo decisions. Decisions live in a separate file read only after all scores are written. The main session has read the decisions, so blind scoring runs in a fresh agent on redacted, anonymised memo text. The blind scorer may read only `data/memos/blind/` and the criteria in `config/rubric.yaml`. It must NOT read `data/memos/sealed/`, `seed/`, `data/notes.json`, `data/text/memos.json`, `data/text/notes.json`, or `reference/AIC_Rubric_v1.md` (the notes and rubric section 8 both reveal memo outcomes).
 - Commit after each stage. Each checkpoint lists what is verified, what is assumed, and what needs a decision.
 
 ## Agreed defaults (user, 2026-11-19)
