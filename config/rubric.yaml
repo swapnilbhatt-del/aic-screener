@@ -93,6 +93,12 @@ bands:
   - {id: partner_review, label: "Partner review", system_may: "Review with 2-3 gaps", human: "Partner decides; no email by default"}
   - {id: pass, label: "Pass recommendation", system_may: "Pass with draft note", human: "Partner decides; nothing auto-rejected"}
 
+feedback:
+  min_similar_corrections: 3     # from the brief: propose a weight change only after 3+ similar corrections
+  similar_means: same criterion, same direction, distinct companies
+  proposal_step: 5               # largest candidate weight move; shrinks (2, then 1) if it would zero a weight. A proposal, never applied
+  proposal_offset: largest other criterion in the same group   # keeps group subtotals and the 100 total
+
 routing:
   deeptech_second_call: Aditya
   first_screen_fintech_consumer: Riya

@@ -148,6 +148,46 @@ CREATE TABLE IF NOT EXISTS corrections (
     corrected_by TEXT NOT NULL CHECK (length(trim(corrected_by)) > 0),
     corrected_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TRIGGER IF NOT EXISTS corrections_human_only
+BEFORE INSERT ON corrections
+WHEN lower(trim(NEW.corrected_by)) IN ('model', 'system', 'auto', 'claude')
+  OR NEW.model_score = NEW.human_score
+  OR instr(NEW.reason, char(10)) > 0
+BEGIN SELECT RAISE(ABORT, 'correction blocked: needs a named human, a changed score, and a one-line reason'); END;
+
+CREATE TRIGGER IF NOT EXISTS corrections_no_update
+BEFORE UPDATE ON corrections
+BEGIN SELECT RAISE(ABORT, 'corrections are append-only; add a new correction instead'); END;
+
+CREATE TRIGGER IF NOT EXISTS corrections_no_delete
+BEFORE DELETE ON corrections
+BEGIN SELECT RAISE(ABORT, 'corrections are append-only'); END;
+
+-- Weight-change proposals (Stage 6). Never applied by code; a human edits config/rubric.yaml.
+CREATE TABLE IF NOT EXISTS weight_proposals (
+    id             INTEGER PRIMARY KEY,
+    criterion      TEXT NOT NULL,
+    direction      TEXT NOT NULL CHECK (direction IN ('up', 'down')),
+    correction_ids TEXT NOT NULL,
+    diff           TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'accepted', 'rejected')),
+    decided_by     TEXT,
+    decided_at     TEXT,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TRIGGER IF NOT EXISTS proposals_insert_proposed
+BEFORE INSERT ON weight_proposals
+WHEN NEW.status <> 'proposed' OR NEW.decided_by IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'proposals are created undecided'); END;
+
+CREATE TRIGGER IF NOT EXISTS proposals_human_decides
+BEFORE UPDATE OF status ON weight_proposals
+WHEN NEW.status <> 'proposed'
+ AND (NEW.decided_by IS NULL OR length(trim(NEW.decided_by)) = 0
+      OR lower(trim(NEW.decided_by)) IN ('model', 'system', 'auto', 'claude'))
+BEGIN SELECT RAISE(ABORT, 'proposal decisions need a named human'); END;
 """
 
 

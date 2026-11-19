@@ -376,8 +376,12 @@ def main(companies: List[str]) -> List[dict]:
     OUT.mkdir(parents=True, exist_ok=True)
     conn = db.connect()
     results = []
+    from . import feedback
+    cfg = config.load()
     for co in companies:
-        r = score(co)
+        r = score(co, cfg=cfg)
+        r["sector"] = feedback.company_sector(co, cfg)
+        r["past_corrections"] = feedback.surface(conn, co, r["sector"])   # same sector, other companies
         (OUT / f"{co}.json").write_text(json.dumps(r, indent=1, ensure_ascii=False))
         # One undecided outcome per company: refresh the model's view; never touch a human decision.
         conn.execute("DELETE FROM outcomes WHERE company=? AND human_decision IS NULL", (co,))
