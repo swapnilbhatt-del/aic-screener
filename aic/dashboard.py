@@ -322,6 +322,7 @@ details summary{cursor:pointer;color:var(--text2)}
 </style></head>
 <body>
 <header><h1>AIC Screener</h1><span class="meta" id="meta"></span>
+<span class="meta"><a href="https://github.com/swapnilbhatt-del/aic-screener" target="_blank" rel="noopener">Source on GitHub</a></span>
 <span class="meta">Theme: <button id="theme" style="font:inherit;background:none;border:1px solid var(--line);color:var(--text);border-radius:6px;cursor:pointer">auto</button></span></header>
 <div class="notice">Recommendations only. Partners decide; nobody is auto-rejected or auto-advanced. Every score cites its evidence; numbers are computed in code.</div>
 <main><nav id="nav" aria-label="Companies"></nav><div id="view"></div></main>
