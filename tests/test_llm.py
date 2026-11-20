@@ -191,3 +191,14 @@ def test_compare_reports_cost_per_model(conn, tmp_path):
     fc = FakeClient(text='{"claims": [{"id": "a"}]}', input_tokens=1000, output_tokens=100)
     r = runner.compare(conn, "extraction", "Pumpwise", "claude-opus-5-5", "claude-haiku-5-5", tmp_path, client=fc)
     assert r["cost_inr"]["claude-haiku-5-5"] < r["cost_inr"]["claude-opus-5-5"] and "a human decides" in r["decision"]
+
+
+@needs_data
+def test_batch_refuses_data_dir_and_stops_at_kill_switch(conn, cfg, tmp_path, monkeypatch):
+    with pytest.raises(runner.RunError):
+        runner.batch(conn, runner.DATA)
+    cfg["ai"]["spend_limits_inr_per_day"] = {"alert": 100, "stop": 300}   # ~₹70 a call: trips after a few
+    monkeypatch.setattr(config, "load", lambda: cfg)
+    fc = FakeClient(text='{"claims": []}', input_tokens=200_000, output_tokens=100)
+    r = runner.batch(conn, tmp_path, client=fc)
+    assert r["stopped"] and 0 < fc.calls < 30 and r["cost_inr"] > 0

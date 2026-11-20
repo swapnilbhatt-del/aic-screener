@@ -42,7 +42,7 @@ what was built, and records what was added. Decisions marked "user" were made by
 ## What you need to do
 
 1. Create a **Portkey** account and a **Langfuse** account yourself. I can't create accounts or handle their passwords. Put the keys in `.env` (copy `.env.example`; `.env` is gitignored), with an Anthropic API key or a Portkey virtual key for Anthropic.
-2. Approve a first metered run. It spends real money, bounded by the kill switch. For example, run `python -m aic.runner scoring Pumpwise --force`, then all three stages for a batch of 10 as the stress test.
+2. First metered run (approved by you on 2026-11-20, to run once the keys are in): `python -m aic.runner batch` runs all three stages for the 10 applications into `data/api_run/`, so the build-session outputs in `data/` are not overwritten. It stops at the kill switch.
 3. Replace the two placeholders, Riya's hourly cost and the USD/INR rate.
 
 Not yet verified against live services: the Portkey header set, the Langfuse ingestion payload and the server-side
