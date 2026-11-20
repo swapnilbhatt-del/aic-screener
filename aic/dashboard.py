@@ -11,7 +11,7 @@ from typing import Optional
 from datetime import datetime
 from pathlib import Path
 
-from . import assurance, config, db
+from . import assurance, config, costs, db
 from .ingest import COMPANIES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -132,8 +132,8 @@ def collect() -> dict:
     return {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "config_version": cfg.get("version"),
             "thresholds": cfg["thresholds"], "groups": {g: sum(cfg["criteria"][k]["weight"] for k in ks)
                                                          for g, ks in cfg["groups"].items()},
-            "companies": companies, "blinded": sorted(blinded), "backtest": backtest, "assurance": assurance.build(),
-            "reports": sorted(p.name for p in (ROOT / "reports").glob("stage*.md")) + ["trust_and_limits.md", "requirements_audit.md"]}
+            "companies": companies, "blinded": sorted(blinded), "backtest": backtest, "assurance": assurance.build(), "ai_cost": costs.build(),
+            "reports": sorted(p.name for p in (ROOT / "reports").glob("stage*.md")) + ["trust_and_limits.md", "requirements_audit.md", "production_readiness.md"]}
 
 
 PUBLISH_HEAD = """<title>AIC Screener</title>
@@ -359,7 +359,7 @@ function nav(){const n=document.getElementById("nav");n.replaceChildren();
   n.append(el("button",{"aria-current":String(current===null),on:{click:()=>{current=null;render();}}},el("span",{},"Overview"),el("span",{class:"t"},"")));
   for(const c of D.companies)n.append(el("button",{"aria-current":String(current===c.company),on:{click:()=>{current=c.company;render();window.scrollTo(0,0);}}},
     el("span",{},c.company),el("span",{class:"t"},c.total.toFixed(0)+" \u00B7 "+ICON[c.band])));
-  if(D.assurance){for(const [k,lab] of [["__trust","Trust & limits"],["__gaps","What's missing"],["__time","Time & cost"]])
+  if(D.assurance){for(const [k,lab] of [["__trust","Trust & limits"],["__gaps","What's missing"],["__time","Time & cost"],["__cost","AI cost & ROI"]])
     n.append(el("button",{"aria-current":String(current===k),on:{click:()=>{current=k;render();window.scrollTo(0,0);}}},el("span",{},lab),el("span",{class:"t"},"")));}
   if(D.backtest)n.append(el("button",{"aria-current":String(current==="__bt"),on:{click:()=>{current="__bt";render();}}},el("span",{},"Backtest (12 memos)"),el("span",{class:"t"},"")));}
 
@@ -506,9 +506,42 @@ function timeView(){const C=D.assurance.time_cost;if(!C||!C.batch_wall_minutes)r
     el("h3",{},"Tokens per application (about "+C.per_application_tokens_total.toLocaleString("en-IN")+")"),table([["k","Stage"],["v","Tokens","n"]],tok),
     el("p",{class:"small muted"},C.cost_note),el("h3",{},"Still done by a person"),...C.still_human.map(x=>el("div",{class:"ev"},"• "+x)),
     el("p",{class:"small muted"},"Source: "+C.source));}
+function inr(x){return x==null?"not measured yet":"\u20B9"+Number(x).toLocaleString("en-IN",{maximumFractionDigits:2});}
+function costView(){const A=D.ai_cost;if(!A)return el("section",{class:"card"},el("p",{},"No cost data."));
+  const M=A.metered,R=A.roi,B=A.build_session,L=A.limits,v=el("div");
+  const ks=M.kill_switch;
+  v.append(el("section",{class:"card"},el("h2",{},"AI spend"),
+    el("p",{class:"muted"},"Every model call goes through one metered client (aic/llm.py) and is written to an append-only ledger. Prices from config; \u20B9 at "+A.usd_inr+" per USD (placeholder rate, replace with your billed rate)."),
+    table([["m","Measure"],["r","Value"]],[
+      {m:"Spend today ("+M.today+")",r:inr(M.today_inr)+" of the "+inr(L.alert)+" alert and "+inr(L.stop)+" stop limits"},
+      {m:"Kill switch",r:ks?("ENGAGED: "+ks.kind+" by "+ks.by+(ks.note?" ("+ks.note+")":"")):"off"},
+      {m:"Spend to date",r:inr(M.total_inr)+" over "+M.calls+" calls ("+M.ok_calls+" paid, "+M.cached_calls+" from cache, "+M.blocked_calls+" blocked)"},
+      {m:"Per application (metered)",r:M.per_application_inr==null?"not measured yet: no application has run through the API runner":inr(M.per_application_inr)+" across "+M.applications+" applications"}]),
+    M.calls?el("div",{},el("h3",{},"By task"),table([[0,"Task"],[1,"Calls","n"],[2,"\u20B9","n"]],M.by_task),
+      el("h3",{},"By model"),table([[0,"Model"],[1,"Calls","n"],[2,"\u20B9","n"]],M.by_model),
+      el("h3",{},"By day"),table([[0,"Day"],[1,"Calls","n"],[2,"\u20B9","n"]],M.by_day),
+      el("h3",{},"By application"),table([[0,"Company"],[1,"Calls","n"],[2,"\u20B9","n"],[3,"Input tokens","n"],[4,"Output tokens","n"],[5,"Cache reads","n"]],M.by_company)):
+      el("p",{class:"small muted"},"The ledger is empty: the 10 applications were scored by build-session agents, which are not metered per call. See the bounds below."),
+    M.events.length?el("div",{},el("h3",{},"Alerts and stops"),table([[0,"At","small"],[1,"Event"],[2,"Spend \u20B9","n"],[3,"By"],[4,"Note","small"]],M.events)):""));
+  if(B)v.append(el("section",{class:"card"},el("h2",{},"Build session (not metered)"),
+    table([["m","Measure"],["r","Value"]],[{m:"Tokens per application",r:B.tokens_per_application.toLocaleString("en-IN")},
+      {m:"If every token were a cache read",r:inr(B.if_all_cache_reads_inr)},{m:"If every token were uncached input",r:inr(B.if_all_uncached_input_inr)}]),
+    el("p",{class:"small muted"},B.note)));
+  v.append(el("section",{class:"card"},el("h2",{},"ROI: Riya's time and the system, in the same unit"),
+    el("p",{class:"muted"},"Riya at \u20B9"+R.riya_inr_per_hour.toLocaleString("en-IN")+"/hour is a PLACEHOLDER (lecture figure); the case gives no salary. Replace roi.riya_inr_per_hour in config."),
+    table([["m","Measure"],["r","Value"]],[
+      {m:"Riya, per application (30 min)",r:inr(R.riya_per_application_inr)},
+      {m:"Riya, per quarter (19 days)",r:inr(R.riya_per_quarter_inr)+" for about "+R.applications_per_quarter+" applications; "+inr(R.riya_per_year_inr)+" a year"},
+      {m:"System, per application",r:R.measured?inr(R.system_per_application_inr)+" ("+R.system_share_pct+"% of Riya's cost)":"not measured yet"+(R.bound_share_pct?"; build-session bounds put it at "+R.bound_share_pct[0]+"% to "+R.bound_share_pct[1]+"% of Riya's cost before output tokens and searches":"")},
+      {m:"Saving per quarter",r:R.measured?inr(R.saving_per_quarter_inr):"after the first metered batch"},
+      {m:"Applications a day before the kill switch trips",r:R.applications_per_day_before_stop==null?"unknown":"about "+R.applications_per_day_before_stop+(R.measured?"":" (on the upper bound)")}]),
+    el("div",{class:"past"},R.caveat),el("div",{class:"past"},R.return_side)));
+  v.append(el("section",{class:"card"},el("h2",{},"Cost levers"),table([["lever","Lever"],["status","Status"],["detail","How","small"]],A.levers)));
+  v.append(el("section",{class:"card"},el("h2",{},"Before production"),table([["step","Step"],["status","Status"],["detail","Detail","small"]],A.readiness)));
+  return v;}
 function render(){nav();const view=document.getElementById("view");view.replaceChildren();
   if(current===null)view.append(overview());else if(current==="__bt")view.append(backtestView());
-  else if(current==="__trust")view.append(trustView());else if(current==="__gaps")view.append(gapsView());else if(current==="__time")view.append(timeView());
+  else if(current==="__trust")view.append(trustView());else if(current==="__gaps")view.append(gapsView());else if(current==="__time")view.append(timeView());else if(current==="__cost")view.append(costView());
   else view.append(companyView(D.companies.find(c=>c.company===current)));}
 render();
 </script></body></html>

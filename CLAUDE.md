@@ -54,3 +54,7 @@ Run tests: `.venv/bin/python -m pytest -q`
 ## Out-of-sample test
 
 `aic/oos.py`: freeze a new batch's scores (snapshot + hash, append-only) before partners decide; frozen companies are hidden from the dashboard; decisions via `oos decide` (named human, DB-enforced); `oos evaluate` runs once, only after every decision is recorded after the freeze. Never record decisions on a partner's behalf. The bar in `config/rubric.yaml` → `oos_test` is a proposal for Kushal.
+
+## AI cost and production (user, 2026-11-20)
+
+Every model call goes through `aic/llm.py`, which writes it to the append-only `ai_calls` ledger in ₹ and applies the cache, the daily alert (₹1,000) and the stop (₹10,000). Only a named human can release a stop. Never call a model API outside this client. `aic/runner.py` runs extraction, research and scoring as API calls. Riya's ₹1,000/h and USD/INR 88 are placeholders. Follow-ups: max 3, then a partner closes the thread (never auto-rejected). Calls stay on Tue/Thu. Kushal joins first calls for deeptech only. See `reports/production_readiness.md`.

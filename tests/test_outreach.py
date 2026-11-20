@@ -204,7 +204,7 @@ def sent_invite(conn, tmp_path, when=NOW):
     return r
 
 
-def test_follow_up_day_three_max_two(conn, tmp_path):
+def test_follow_up_day_three_max_three_then_partner_decides(conn, tmp_path):
     r = sent_invite(conn, tmp_path)
     sender = outreach.DryRunSender(tmp_path / "sent")
     assert outreach.due_followups(conn, NOW + timedelta(days=2, hours=23)) == []
@@ -213,15 +213,39 @@ def test_follow_up_day_three_max_two(conn, tmp_path):
     assert outreach.due_followups(conn, NOW + timedelta(days=4)) == []          # one pending draft at a time
     with pytest.raises(sqlite3.IntegrityError):                                  # follow-ups need approval too
         outreach.send(conn, f1[0], sender, NOW + timedelta(days=3))
-    outreach.approve_email(conn, f1[0], "Kushal")
-    outreach.send(conn, f1[0], sender, NOW + timedelta(days=3))
-    assert outreach.due_followups(conn, NOW + timedelta(days=5)) == []          # 3 days from the follow-up
-    f2 = outreach.due_followups(conn, NOW + timedelta(days=6))
-    assert len(f2) == 1
-    outreach.approve_email(conn, f2[0], "Kushal")
-    outreach.send(conn, f2[0], sender, NOW + timedelta(days=6))
-    assert conn.execute("SELECT followups_sent FROM threads WHERE id=?", (r["thread_id"],)).fetchone()[0] == 2
-    assert outreach.due_followups(conn, NOW + timedelta(days=30)) == []         # max two
+    day = 3
+    for n in range(3):
+        if n:
+            assert outreach.due_followups(conn, NOW + timedelta(days=day - 1)) == []   # 3 days from the last one
+            (f,) = outreach.due_followups(conn, NOW + timedelta(days=day))
+        else:
+            f = f1[0]
+        outreach.approve_email(conn, f, "Kushal")
+        outreach.send(conn, f, sender, NOW + timedelta(days=day))
+        day += 3
+    tid = r["thread_id"]
+    assert conn.execute("SELECT followups_sent FROM threads WHERE id=?", (tid,)).fetchone()[0] == 3
+    assert outreach.due_followups(conn, NOW + timedelta(days=day - 1)) == []
+    assert conn.execute("SELECT status FROM threads WHERE id=?", (tid,)).fetchone()[0] == "awaiting_reply"
+    assert outreach.due_followups(conn, NOW + timedelta(days=day)) == []         # no fourth follow-up ...
+    # ... and no auto-reject: the silent thread waits for a partner
+    assert conn.execute("SELECT status FROM threads WHERE id=?", (tid,)).fetchone()[0] == "no_reply"
+
+
+@pytest.mark.parametrize("by", ["model", "system", "Claude", ""])
+def test_silent_thread_closed_only_by_named_human(conn, tmp_path, by):
+    r = sent_invite(conn, tmp_path)
+    conn.execute("UPDATE threads SET status='no_reply' WHERE id=?", (r["thread_id"],))
+    with pytest.raises(sqlite3.IntegrityError):
+        outreach.close_no_reply(conn, r["thread_id"], by)
+    outreach.close_no_reply(conn, r["thread_id"], "Kushal")
+    assert conn.execute("SELECT status, closed_by FROM threads").fetchone() == ("closed", "Kushal")
+
+
+def test_close_no_reply_only_for_silent_threads(conn, tmp_path):
+    r = sent_invite(conn, tmp_path)
+    with pytest.raises(OutreachError):
+        outreach.close_no_reply(conn, r["thread_id"], "Kushal")
 
 
 def test_no_follow_up_after_reply(conn, tmp_path):
@@ -233,7 +257,7 @@ def test_no_follow_up_after_reply(conn, tmp_path):
 def test_thread_followup_cap_in_db(conn, tmp_path):
     r = invite(conn)
     with pytest.raises(sqlite3.IntegrityError):
-        conn.execute("UPDATE threads SET followups_sent=3 WHERE id=?", (r["thread_id"],))
+        conn.execute("UPDATE threads SET followups_sent=4 WHERE id=?", (r["thread_id"],))
 
 
 @pytest.mark.parametrize("now,first", [
@@ -245,3 +269,47 @@ def test_thread_followup_cap_in_db(conn, tmp_path):
 def test_slots_never_same_day(conn, now, first):
     s = outreach.propose_slots(conn, now, 3)
     assert s[0] == first and all(x.date() > now.date() for x in s)
+
+
+# ---- requested times and attendees (lecture, 19 Nov) ------------------------------------
+FRI = NOW + timedelta(days=1)          # Fri 20 Nov; invite holds Tue 24 Nov 14:00, 14:30, 15:00
+
+
+@pytest.mark.parametrize("body,expect", [
+    ("Thursday 3pm works for me", "2026-11-26T15:00:00+05:30"),
+    ("Can we do Thu at 16:30 instead?", "2026-11-26T16:30:00+05:30"),
+    ("Tuesday 3 is good", "2026-11-24T15:00:00+05:30"),
+    ("Thursday 3pm or Tuesday 4pm?", None),          # two proposals: a human picks
+    ("Yes, happy to talk", None),
+])
+def test_parse_requested_slot(body, expect):
+    t = outreach.parse_requested_slot(body, FRI)
+    assert (t.isoformat() if t else None) == expect
+
+
+def reply(conn, tmp_path, body):
+    r = sent_invite(conn, tmp_path)
+    rep = outreach.record_reply(conn, r["thread_id"], PLACEHOLDER, body, FRI)
+    return rep, outreach.handle_requested_slot(conn, rep["reply_id"], FRI)
+
+
+def test_free_requested_slot_gets_one_hold_needing_approval(conn, tmp_path):
+    rep, res = reply(conn, tmp_path, "Thursday 3pm works for me")
+    assert rep["classification"] == "yes" and res["available"] and res["requested"] == "2026-11-26T15:00:00+05:30"
+    assert conn.execute("SELECT status, attendees FROM calendar_holds WHERE id=?", (res["hold_id"],)).fetchone() == \
+        ("proposed", "Riya, Kushal")
+
+
+@pytest.mark.parametrize("body,why", [("Can we do Monday 4pm instead?", "not a call day"),
+                                      ("Tuesday 2pm is fine", "already held"),
+                                      ("Can we do Thursday 7pm instead?", "outside")])
+def test_unavailable_requested_slot_gets_alternatives(conn, tmp_path, body, why):
+    _rep, res = reply(conn, tmp_path, body)
+    assert res["available"] is False and why in res["reason"] and len(res["alternatives"]) == 3
+
+
+def test_deeptech_first_call_includes_kushal_others_riya_only():
+    if outreach.sector("Pumpwise") is None:
+        pytest.skip("no application data")
+    assert outreach.first_call_attendees("Pumpwise") == ["Riya", "Kushal"]      # sector: Deeptech
+    assert outreach.first_call_attendees("CAPilot") == ["Riya"]                 # sector: Fintech

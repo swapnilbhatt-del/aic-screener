@@ -7,6 +7,19 @@ from typing import Optional, Union
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB = ROOT / "data" / "aic.db"
 
+THREADS_DDL = """CREATE TABLE IF NOT EXISTS {name} (
+    id              INTEGER PRIMARY KEY,
+    company         TEXT NOT NULL,
+    root_outbox_id  INTEGER NOT NULL UNIQUE REFERENCES outbox(id),
+    status          TEXT NOT NULL DEFAULT 'awaiting_reply'
+                    CHECK (status IN ('awaiting_reply', 'replied', 'no_reply', 'closed')),
+    -- no_reply: max follow-ups sent and still silent; a partner decides (never auto-closed).
+    followups_sent  INTEGER NOT NULL DEFAULT 0 CHECK (followups_sent BETWEEN 0 AND 3),  -- backstop; config sets the cap
+    closed_by       TEXT CHECK (closed_by IS NULL OR lower(trim(closed_by)) NOT IN ('model', 'system', 'auto', 'claude', '')),
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
 SCHEMA = """
 PRAGMA foreign_keys = ON;
 
@@ -165,14 +178,7 @@ BEFORE DELETE ON corrections
 BEGIN SELECT RAISE(ABORT, 'corrections are append-only'); END;
 
 -- Outreach threads (Stage 7). One thread per first email; follow-ups link to it.
-CREATE TABLE IF NOT EXISTS threads (
-    id              INTEGER PRIMARY KEY,
-    company         TEXT NOT NULL,
-    root_outbox_id  INTEGER NOT NULL UNIQUE REFERENCES outbox(id),
-    status          TEXT NOT NULL DEFAULT 'awaiting_reply' CHECK (status IN ('awaiting_reply', 'replied', 'closed')),
-    followups_sent  INTEGER NOT NULL DEFAULT 0 CHECK (followups_sent BETWEEN 0 AND 2),
-    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-);
+__THREADS__
 
 CREATE TABLE IF NOT EXISTS thread_messages (
     thread_id  INTEGER NOT NULL REFERENCES threads(id),
@@ -274,6 +280,78 @@ BEGIN SELECT RAISE(ABORT, 'proposal decisions need a named human'); END;
 """
 
 
+AI_SCHEMA = """
+-- Every model call, metered (lecture 19 Nov: know where every rupee goes before production). Append-only.
+CREATE TABLE IF NOT EXISTS ai_calls (
+    id                 INTEGER PRIMARY KEY,
+    at                 TEXT NOT NULL,
+    day                TEXT NOT NULL,             -- IST date, for the daily limits
+    task               TEXT NOT NULL,
+    company            TEXT,
+    model              TEXT NOT NULL,
+    gateway            TEXT NOT NULL,             -- anthropic | portkey | cache | test
+    input_tokens       INTEGER NOT NULL DEFAULT 0,
+    output_tokens      INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    web_searches       INTEGER NOT NULL DEFAULT 0,
+    cost_usd           REAL NOT NULL DEFAULT 0,
+    cost_inr           REAL NOT NULL DEFAULT 0,
+    latency_ms         INTEGER,
+    status             TEXT NOT NULL CHECK (status IN ('ok', 'cached', 'error', 'blocked')),
+    request_id         TEXT,
+    trace_id           TEXT,
+    error              TEXT
+);
+CREATE TRIGGER IF NOT EXISTS ai_calls_no_update BEFORE UPDATE ON ai_calls
+BEGIN SELECT RAISE(ABORT, 'ai_calls is a ledger: append only'); END;
+CREATE TRIGGER IF NOT EXISTS ai_calls_no_delete BEFORE DELETE ON ai_calls
+BEGIN SELECT RAISE(ABORT, 'ai_calls is a ledger: append only'); END;
+
+-- Response cache: the same request never pays twice.
+CREATE TABLE IF NOT EXISTS llm_cache (
+    key        TEXT PRIMARY KEY,
+    model      TEXT NOT NULL,
+    response   TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+-- Alerts and the kill switch. Latest row per day decides; only a named human can release a stop.
+CREATE TABLE IF NOT EXISTS spend_events (
+    id      INTEGER PRIMARY KEY,
+    at      TEXT NOT NULL,
+    day     TEXT NOT NULL,
+    kind    TEXT NOT NULL CHECK (kind IN ('alert', 'stop', 'manual_stop', 'release')),
+    spend_inr REAL NOT NULL,
+    by      TEXT NOT NULL,
+    note    TEXT
+);
+CREATE TRIGGER IF NOT EXISTS spend_release_human BEFORE INSERT ON spend_events
+WHEN NEW.kind = 'release' AND lower(trim(NEW.by)) IN ('model', 'system', 'auto', 'claude', '')
+BEGIN SELECT RAISE(ABORT, 'only a named human can release the kill switch'); END;
+CREATE TRIGGER IF NOT EXISTS spend_events_no_update BEFORE UPDATE ON spend_events
+BEGIN SELECT RAISE(ABORT, 'spend_events is append only'); END;
+CREATE TRIGGER IF NOT EXISTS spend_events_no_delete BEFORE DELETE ON spend_events
+BEGIN SELECT RAISE(ABORT, 'spend_events is append only'); END;
+"""
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring an existing DB up to the current schema without losing rows."""
+    sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='threads'").fetchone()[0]
+    if "BETWEEN 0 AND 3" not in sql:          # follow-up cap 2 -> 3 and 'no_reply' status (user 2026-11-20)
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.executescript(THREADS_DDL.format(name="threads_new") +
+                           "INSERT INTO threads_new (id, company, root_outbox_id, status, followups_sent, created_at) "
+                           "SELECT id, company, root_outbox_id, status, followups_sent, created_at FROM threads;"
+                           "DROP TABLE threads; ALTER TABLE threads_new RENAME TO threads;")
+        conn.execute("PRAGMA foreign_keys = ON")
+    for table, col, ddl in (("replies", "requested_slot", "TEXT"), ("calendar_holds", "attendees", "TEXT")):
+        if col not in [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+    conn.commit()
+
+
 def connect(path: Optional[Union[str, Path]] = None) -> sqlite3.Connection:
     """Open the DB with foreign keys on and the schema applied. Use ':memory:' in tests."""
     target = str(path) if path is not None else str(DEFAULT_DB)
@@ -281,5 +359,6 @@ def connect(path: Optional[Union[str, Path]] = None) -> sqlite3.Connection:
         Path(target).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(target)
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.executescript(SCHEMA)
+    conn.executescript(SCHEMA.replace("__THREADS__", THREADS_DDL.format(name="threads")) + AI_SCHEMA)
+    _migrate(conn)
     return conn

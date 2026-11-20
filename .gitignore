@@ -25,3 +25,4 @@ dashboard/*.html
 
 # Static site build for hosting (contains founder data and source PDFs)
 site/
+!.env.example

@@ -1,3 +1,4 @@
 pypdf==6.21.4
 PyYAML==6.0.3
 pytest==8.4.2
+anthropic>=0.125,<1   # Python 3.9 venv; 1.x needs 3.10+

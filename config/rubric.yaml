@@ -124,6 +124,32 @@ outreach:
   slot_lead: next_business_day   # user 2026-11-19: never offer a same-day slot
   holds_per_invite: 3            # user 2026-11-19: each invite tentatively holds all proposed slots (each needs approval)
   follow_up_after_days: 3
-  max_follow_ups: 2
+  max_follow_ups: 3              # user 2026-11-20 (lecture, 19 Nov): up to 3; then a partner decides (no auto-reject)
+  after_last_follow_up: partner_decides
+  deeptech_first_call_attendees: [Riya, Kushal]   # lecture 19 Nov: Kushal joins the first call only for deeptech
+  first_call_attendees: [Riya]
   calendar_mode: ics_only
   # Recipients are held in the DB table allowed_recipients (empty by default), not here.
+
+# ---- AI cost tracking, guardrails and ROI (user 2026-11-20, from the 19 Nov lecture) ----
+ai:
+  # Every model call goes through aic/llm.py: metered into ai_calls, cached, and stopped by the kill switch.
+  models:                 # per task; change only after `python -m aic.llm compare` shows a cheaper model holds quality
+    extraction: claude-opus-5-5
+    research: claude-opus-5-5
+    scoring: claude-opus-5-5
+    drafting: claude-opus-5-5
+  effort: {extraction: medium, research: high, scoring: high, drafting: low}
+  prices_usd_per_mtok:    # Anthropic first-party list prices (claude-api reference, cached 2026-11-03)
+    claude-opus-5-5:   {input: 4.00, output: 20.00, cache_read: 0.20, cache_write: 5.00}
+    claude-sonnet-5-5: {input: 2.00, output: 10.00, cache_read: 0.10, cache_write: 2.50}
+    claude-haiku-5-5:  {input: 0.10, output: 0.50,  cache_read: 0.01, cache_write: 0.125}
+  web_search_usd_per_1k: 10.00
+  usd_inr: 88.0           # ASSUMPTION: placeholder rate, not sourced. Replace with the rate your card is billed at.
+  spend_limits_inr_per_day: {alert: 1000, stop: 10000}   # user 2026-11-20 (lecture example figures)
+  day_tz: Asia/Kolkata
+roi:
+  riya_inr_per_hour: 1000   # user 2026-11-20: PLACEHOLDER from the lecture; replace with Riya's real cost
+  riya_minutes_per_application: 30   # case brief
+  riya_days_per_quarter: 19          # case brief
+  hours_per_day: 8                   # assumption (also in reports/run_metrics.json)

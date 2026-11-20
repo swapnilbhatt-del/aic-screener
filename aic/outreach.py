@@ -108,6 +108,21 @@ def propose_slots(conn: sqlite3.Connection, after: datetime, n: int = 3, cfg: Op
     return out
 
 
+def sector(company: str) -> Optional[str]:
+    p = ROOT / "data" / "applications" / f"{company}.json"
+    if not p.exists():
+        return None
+    v = json.loads(p.read_text()).get("form_fields", {}).get("sector_selected")
+    return (v.get("value") if isinstance(v, dict) else v) or None
+
+
+def first_call_attendees(company: str, cfg: Optional[dict] = None) -> List[str]:
+    """Riya takes first calls; Kushal joins only when the company is deeptech (lecture, 19 Nov)."""
+    o = (cfg or config.load())["outreach"]
+    s = (sector(company) or "").lower().replace(" ", "").replace("-", "")
+    return list(o["deeptech_first_call_attendees"] if s == "deeptech" else o["first_call_attendees"])
+
+
 def fmt_slot(t: datetime) -> str:
     return t.strftime("%a %d %b, %H:%M") + " IST"
 
@@ -131,8 +146,9 @@ def draft_invite(conn, company: str, to_addr: str, founder_first: str, after: da
                        (company, to, subject, body)).lastrowid
     tid = conn.execute("INSERT INTO threads (company, root_outbox_id) VALUES (?, ?)", (company, oid)).lastrowid
     conn.execute("INSERT INTO thread_messages (thread_id, outbox_id) VALUES (?, ?)", (tid, oid))
-    holds = [conn.execute("INSERT INTO calendar_holds (company, start_at, minutes) VALUES (?, ?, ?)",
-                          (company, s.isoformat(), config.load()["outreach"]["slot_minutes"])).lastrowid for s in slots]
+    who = ", ".join(first_call_attendees(company))
+    holds = [conn.execute("INSERT INTO calendar_holds (company, start_at, minutes, attendees) VALUES (?, ?, ?, ?)",
+                          (company, s.isoformat(), config.load()["outreach"]["slot_minutes"], who)).lastrowid for s in slots]
     conn.commit()
     return {"outbox_id": oid, "thread_id": tid, "hold_ids": holds, "slots": [s.isoformat() for s in slots]}
 
@@ -203,8 +219,8 @@ def send(conn, outbox_id: int, sender: Optional[DryRunSender] = None, now: Optio
 def approve_hold(conn, hold_id: int, by: str, outdir: Path = OUTBOX / "ics") -> Path:
     aid = conn.execute("INSERT INTO approvals (action_type, target_id, approved_by) VALUES ('create_calendar_hold', ?, ?)",
                        (hold_id, by)).lastrowid
-    company, start, mins = conn.execute("SELECT company, start_at, minutes FROM calendar_holds WHERE id=?",
-                                        (hold_id,)).fetchone()
+    company, start, mins, who = conn.execute("SELECT company, start_at, minutes, attendees FROM calendar_holds WHERE id=?",
+                                             (hold_id,)).fetchone()
     path = outdir / f"hold_{hold_id:05d}_{company}.ics"
     try:
         conn.execute("UPDATE calendar_holds SET status='held', approval_id=?, ics_path=? WHERE id=?",
@@ -217,6 +233,7 @@ def approve_hold(conn, hold_id: int, by: str, outdir: Path = OUTBOX / "ics") -> 
             "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//AIC Screener//dry-run//EN", "BEGIN:VEVENT",
             f"UID:aic-hold-{hold_id}@screener.invalid", f"DTSTAMP:{datetime.now(ZoneInfo('UTC')).strftime(f)}",
             f"DTSTART:{s.strftime(f)}", f"DTEND:{e.strftime(f)}", f"SUMMARY:HOLD (tentative): call with {company}",
+            f"DESCRIPTION:Attendees: {who or 'Riya'}",
             "STATUS:TENTATIVE", "TRANSP:OPAQUE", "END:VEVENT", "END:VCALENDAR", ""]))
     except Exception:
         conn.rollback()
@@ -264,12 +281,13 @@ def classify(body: str) -> str:
 
 def record_reply(conn, thread_id: int, from_addr: str, body: str, received_at: datetime) -> dict:
     label = classify(body)
-    rid = conn.execute("INSERT INTO replies (thread_id, received_at, from_addr, body, classification, classifier) "
-                       "VALUES (?, ?, ?, ?, ?, 'rules-v1')",
-                       (thread_id, received_at.isoformat(), from_addr, body, label)).lastrowid
+    req = parse_requested_slot(body, received_at) if label in ("yes", "reschedule") else None
+    rid = conn.execute("INSERT INTO replies (thread_id, received_at, from_addr, body, classification, classifier, requested_slot) "
+                       "VALUES (?, ?, ?, ?, ?, 'rules-v1', ?)",
+                       (thread_id, received_at.isoformat(), from_addr, body, label, req.isoformat() if req else None)).lastrowid
     conn.execute("UPDATE threads SET status='replied' WHERE id=?", (thread_id,))
     conn.commit()
-    return {"reply_id": rid, "classification": label,
+    return {"reply_id": rid, "classification": label, "requested_slot": req.isoformat() if req else None,
             "needs_human": label in ("no", "unclear")}
 
 
@@ -279,6 +297,74 @@ def confirm_reply(conn, reply_id: int, by: str, classification: Optional[str] = 
     conn.execute("UPDATE replies SET confirmed_by=?, confirmed_at=? WHERE id=?",
                  (by, datetime.now(IST).isoformat(), reply_id))
     conn.commit()
+
+
+WEEKDAY_RE = re.compile(r"\b(mon|tue|wed|thu|fri|sat|sun)[a-z]*\b[^0-9\n]{0,12}?(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?", re.I)
+
+
+def parse_requested_slot(body: str, after: datetime) -> Optional[datetime]:
+    """A day-and-time the founder proposes ("Thursday 3pm", "Thu at 15:30"): data, read only to check our calendar.
+    Returns the next such time after `after`, or None when there is no single clear proposal."""
+    found = WEEKDAY_RE.findall(body[:4000])
+    if len(found) != 1:
+        return None                                   # none, or several: a human picks
+    day, h, m, ap = found[0]
+    h, m = int(h), int(m or 0)
+    if ap.lower() == "pm" and h < 12:
+        h += 12
+    elif not ap and 1 <= h <= 7:                      # "Thursday 3" in a business context means afternoon
+        h += 12
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return None
+    wd = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].index(day[:3].lower())
+    after = after.astimezone(IST)
+    d = after.date() + timedelta(days=(wd - after.weekday()) % 7)
+    t = datetime.combine(d, time(h, m), IST)
+    return t if t > after else t + timedelta(days=7)
+
+
+def slot_available(conn, t: datetime, now: datetime, cfg: Optional[dict] = None) -> (bool, str):
+    """Is t one of our own bookable slots? Same rules as propose_slots: days, window, length, lead, not taken."""
+    cfg = cfg or config.load()
+    o = cfg["outreach"]
+    t = t.astimezone(IST)
+    start_t, end_t = (time.fromisoformat(o["slot_window"][k]) for k in ("start", "end"))
+    if t.weekday() not in {DAYS[d] for d in o["slot_days"]}:
+        return False, f"not a call day ({', '.join(o['slot_days'])})"
+    if not (start_t <= t.time() and (datetime.combine(t.date(), t.time()) + timedelta(minutes=o["slot_minutes"])).time() <= end_t):
+        return False, f"outside {o['slot_window']['start']}-{o['slot_window']['end']} IST"
+    if o.get("slot_lead") == "next_business_day":
+        d0 = now.astimezone(IST).date() + timedelta(days=1)
+        while d0.weekday() >= 5:
+            d0 += timedelta(days=1)
+        if t.date() < d0:
+            return False, "too soon (no same-day slots)"
+    elif t <= now:
+        return False, "in the past"
+    taken = {datetime.fromisoformat(r[0]) for r in conn.execute(
+        "SELECT start_at FROM calendar_holds WHERE status IN ('proposed', 'held')")}
+    if any(abs((t - x).total_seconds()) < o["slot_minutes"] * 60 for x in taken):
+        return False, "already held"
+    return True, "free"
+
+
+def handle_requested_slot(conn, reply_id: int, now: datetime, cfg: Optional[dict] = None) -> dict:
+    """If the founder proposed a time and it is free, propose one hold at exactly that time (approval still needed);
+    otherwise propose our next free slots. Nothing is sent or booked here."""
+    cfg = cfg or config.load()
+    thread_id, req = conn.execute("SELECT thread_id, requested_slot FROM replies WHERE id=?", (reply_id,)).fetchone()
+    company = conn.execute("SELECT company FROM threads WHERE id=?", (thread_id,)).fetchone()[0]
+    if req:
+        ok, why = slot_available(conn, datetime.fromisoformat(req), now, cfg)
+        if ok:
+            hid = conn.execute("INSERT INTO calendar_holds (company, start_at, minutes, attendees) VALUES (?, ?, ?, ?)",
+                               (company, req, cfg["outreach"]["slot_minutes"], ", ".join(first_call_attendees(company, cfg)))).lastrowid
+            conn.commit()
+            return {"requested": req, "available": True, "hold_id": hid,
+                    "next": "draft a confirmation for that time; the hold and the email each need approval"}
+        return {"requested": req, "available": False, "reason": why,
+                "alternatives": [s.isoformat() for s in propose_slots(conn, now, cfg=cfg)]}
+    return {"requested": None, "alternatives": [s.isoformat() for s in propose_slots(conn, now, cfg=cfg)]}
 
 
 ACTIONS = {"yes": "propose_slots", "reschedule": "propose_slots", "no": "close_thread", "unclear": "hand_to_partner"}
@@ -310,9 +396,13 @@ def due_followups(conn, now: datetime, cfg: Optional[dict] = None) -> List[int]:
         "FROM threads t JOIN outbox o ON o.id=t.root_outbox_id "
         "WHERE t.status='awaiting_reply'").fetchall()
     for tid, company, sent_n, to, _subj, last_sent, pending in rows:
-        if not last_sent or pending or sent_n >= o["max_follow_ups"]:
+        if not last_sent or pending:
             continue
         if now - datetime.fromisoformat(last_sent) < timedelta(days=o["follow_up_after_days"]):
+            continue
+        if sent_n >= o["max_follow_ups"]:
+            # Still silent after the last follow-up: never auto-rejected. A partner decides (close_no_reply).
+            conn.execute("UPDATE threads SET status='no_reply' WHERE id=?", (tid,))
             continue
         slots = propose_slots(conn, now, cfg=cfg)
         subject, body = _render("follow_up", company=company, founder_first="[EDIT: name]",
@@ -324,6 +414,15 @@ def due_followups(conn, now: datetime, cfg: Optional[dict] = None) -> List[int]:
         made.append(oid)
     conn.commit()
     return made
+
+
+def close_no_reply(conn, thread_id: int, by: str, note: str = "") -> None:
+    """A partner closes a silent thread (the DB rejects model/system names)."""
+    st = conn.execute("SELECT status FROM threads WHERE id=?", (thread_id,)).fetchone()
+    if not st or st[0] != "no_reply":
+        raise OutreachError(f"thread {thread_id} is not waiting on a no-reply decision")
+    conn.execute("UPDATE threads SET status='closed', closed_by=? WHERE id=?", (by, thread_id))
+    conn.commit()
 
 
 # ---- CLI -------------------------------------------------------------------------

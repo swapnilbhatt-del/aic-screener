@@ -46,6 +46,17 @@ def validate(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     if cfg["outreach"].get("dry_run") is not True:
         raise ConfigError("outreach.dry_run must be true until a partner approves live sending")
+
+    ai = cfg.get("ai")
+    if ai:
+        for task, model in ai["models"].items():
+            if model not in ai["prices_usd_per_mtok"]:
+                raise ConfigError(f"ai.models.{task} = {model} has no price in ai.prices_usd_per_mtok")
+        lim = ai["spend_limits_inr_per_day"]
+        if not (0 < lim["alert"] < lim["stop"]):
+            raise ConfigError(f"ai spend limits must satisfy 0 < alert < stop, got {lim}")
+        if not ai.get("usd_inr", 0) > 0:
+            raise ConfigError("ai.usd_inr must be positive")
     return cfg
 
 

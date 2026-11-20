@@ -1,7 +1,7 @@
 # Requirements audit
 
 Date: 2026-11-19. Every requirement in (A) the build brief given at the start of the project and (B) the case
-brief `MESA_T2_Case 03_All in Capital.pdf`, with where it is met. Tests: 376 passed.
+brief `MESA_T2_Case 03_All in Capital.pdf`, with where it is met. Tests: 411 passed.
 
 Status: **Met** = built and tested. **Partly** = built, with a limit stated. **By design** = deliberately limited by a hard constraint.
 
@@ -49,7 +49,7 @@ Status: **Met** = built and tested. **Partly** = built, with a limit stated. **B
 |---|---|---|
 | Dashboard: score card, gate status, evidence links, discrepancies, recommendation, decision history | Met | local `dashboard/index.html`; public https://aic-screener.vercel.app; artifact (private) |
 | Run report per stage with counts, failures and open questions | Met | `reports/stage0.md` to `stage7.md` |
-| Tests for every deterministic check and the approval gate | Met | 359 tests |
+| Tests for every deterministic check and the approval gate | Met | 411 tests |
 | Ask before judgement calls that change the rubric | Met | every rubric decision recorded with date in `config/rubric.yaml` |
 | Say when a source is missing or contradictory | Met | not-found log, conflicts, UNCHECKABLE checks, "What's missing" page |
 | Commit after each stage; checkpoint lists verified / assumed / to decide | Met | git history; each stage report |
@@ -79,3 +79,20 @@ Status: **Met** = built and tested. **Partly** = built, with a limit stated. **B
 2. **Sign-off:** Kushal to agree the trust terms (or set his own bar).
 3. **Partner review time:** time it on the first real batch to finish the 19-days comparison.
 4. **Live sending and booking:** a mailbox and calendar connection is out of scope while hard constraint 1 and dry-run apply. A change would need your explicit decision.
+
+## C. Lecture, 19 Nov: AI cost tracking and ROI before production
+
+The full comparison is in `reports/production_readiness.md`.
+
+| Requirement | Status | Where |
+|---|---|---|
+| Record tokens and cost for every AI call in the DB | Met | `aic/llm.py`, `ai_calls` (append-only) |
+| Admin spend page | Met | Dashboard → AI cost & ROI |
+| Alerts and kill switch | Met | ₹1,000 alert, ₹10,000 stop, worst-case refusal, manual stop; release by a named human only |
+| ROI in the same unit | Partly | Riya's cost in ₹ (placeholder rate); system cost per application not measured until the first metered batch |
+| Send less, cache, cap, cheaper models | Met | Trimmed payloads; llm cache and file cache; kill switch; per-task models plus `runner compare` |
+| Portkey and Langfuse | Partly | Integrated; needs your accounts and keys |
+| Founder counter-proposes a time | Met | Parsed, checked against own slots, one hold for approval or three alternatives |
+| Follow-ups max 3, then rejected | Met / By design | Max 3; then a partner decides (hard constraint 2: no auto-reject) |
+| Kushal joins deeptech first calls only | Met | Attendees on holds and `.ics` |
+| Monday/Thursday slots | Not adopted | User kept Tuesday/Thursday (build brief) |
