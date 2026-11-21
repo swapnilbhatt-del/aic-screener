@@ -60,3 +60,18 @@ You asked to run on your Gemini key. `ai.models` now uses `gemini-4-carbon`, whi
   - Portkey's `POST /v1/api-keys/{type}/{sub-type}` is authenticated with an existing `x-portkey-api-key`.
   - Langfuse's organizations API is "only available on self-hosted instances, not on Langfuse Cloud" and needs an admin key.
   - So the first key for each has to come from a sign-up you do yourself.
+
+## First metered run, 2026-11-21 (Gemini, free tier)
+
+The key you gave me is on Google's free tier:
+- **`gemini-4-carbon`:** quota 0 on the free tier, so it can't run on this key.
+- **`gemini-3.8-flash`:** 503 "high demand".
+- **`gemini-3.5-flash-lite`:** works for small calls. `ai.models` now uses it.
+- **Google Search grounding:** 429 on every call, while plain calls on the same key succeed. Research can't run on this key.
+- **Scoring for CAPilot, and extraction for CareCorner:** 503 "high demand" after 4 retries over about 7.5 minutes. I stopped the batch there.
+
+Measured so far:
+- **One extraction (CAPilot):** 2,520 input and 3,748 output tokens (thinking included), ₹0.89 at paid-tier prices. That's ₹0 billed on the free tier.
+- **Claim count:** 35 claims, against 76 from the build-session (Claude) run. Not reviewed yet; that's `compare`'s job.
+
+Not measured: research, scoring, and a per-application cost. What it needs: billing enabled on the Gemini key (paid tier: search grounding, Carbon and higher priority), or a retry when Google is less busy.

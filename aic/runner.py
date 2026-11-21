@@ -4,7 +4,7 @@
   python -m aic.runner research   <Company> [--force]
   python -m aic.runner scoring    <Company> [--force]
   python -m aic.runner compare    <extraction|research|scoring> <Company> <model_a> <model_b>
-  python -m aic.runner batch      (all 3 stages x all applications into data/api_run/, metered)
+  python -m aic.runner batch [--skip research]   (stages x all applications into data/api_run/, metered)
 
 Same prompts (prompts/*.md), same output files, same validators as the build session; the model's output is
 checked in code and never trusted on its own. Cost levers from the lecture are built in:
@@ -152,7 +152,7 @@ def companies() -> list:
     return sorted(p.stem for p in (DATA / "applications").glob("*.json"))
 
 
-def batch(conn, out_base: Path, client=None) -> dict:
+def batch(conn, out_base: Path, client=None, stages=STAGES) -> dict:
     """Run all three stages for every application into out_base (never over the build-session outputs in data/).
 
     Inputs still come from data/, so each stage is metered against the same inputs the build session used.
@@ -162,14 +162,17 @@ def batch(conn, out_base: Path, client=None) -> dict:
         raise RunError("batch writes to a separate folder, not data/ (it would overwrite the build-session outputs)")
     results, stopped = [], None
     for co in companies():
-        for stage in STAGES:
+        for stage in stages:
             try:
                 results.append(run(conn, stage, co, force=True, out_base=out_base, client=client))
+                r = results[-1]
+                print(f"{co} {stage}: ₹{r['cost_inr']} errors={len(r['validation_errors'])}", file=sys.stderr, flush=True)
             except llm.SpendStopped as e:
                 stopped = str(e)
                 break
             except (RunError, llm.ModelError) as e:
                 results.append({"stage": stage, "company": co, "error": str(e), "cost_inr": 0.0})
+                print(f"{co} {stage}: ERROR {str(e)[:200]}", file=sys.stderr, flush=True)
         if stopped:
             break
     return {"out": str(out_base), "runs": len(results), "errors": sum("error" in r for r in results),
@@ -182,7 +185,11 @@ if __name__ == "__main__":
     a, conn = sys.argv[1:], db.connect()
     try:
         if a[:1] == ["batch"]:
-            print(json.dumps(batch(conn, ROOT / "data" / "api_run"), indent=1))
+            skip = a[a.index("--skip") + 1].split(",") if "--skip" in a else []
+            res = batch(conn, ROOT / "data" / "api_run", stages=tuple(s for s in STAGES if s not in skip))
+            (ROOT / "data" / "api_run").mkdir(parents=True, exist_ok=True)
+            (ROOT / "data" / "api_run" / "batch_result.json").write_text(json.dumps(res, indent=1, ensure_ascii=False))
+            print(json.dumps({k: v for k, v in res.items() if k != "results"}, indent=1))
         elif a[:1] and a[0] in STAGES and len(a) >= 2:
             print(json.dumps(run(conn, a[0], a[1], force="--force" in a), indent=1))
         elif a[:1] == ["compare"] and len(a) == 5:

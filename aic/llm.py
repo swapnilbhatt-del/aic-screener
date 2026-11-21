@@ -95,13 +95,22 @@ class GeminiClient:
         if not self.key:
             raise ModelError("GEMINI_API_KEY is not set (.env)")
 
-    def generate(self, model: str, body: dict, timeout: int = 600) -> dict:
-        req = urllib.request.Request(GEMINI_URL.format(model=model), data=json.dumps(body).encode(), method="POST",
-                                     headers={"Content-Type": "application/json", "x-goog-api-key": self.key})
-        try:
-            return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
-        except urllib.error.HTTPError as e:
-            raise ModelError(f"Gemini HTTP {e.code}: {e.read()[:500]!r}") from None
+    def generate(self, model: str, body: dict, timeout: int = 300, retries: int = 4) -> dict:
+        """Retries only 'busy' (503) and rate-limit (429) answers, with backoff; nothing is billed for those.
+        A 429 whose quota limit is 0 (model not available on this key's tier) is not retried."""
+        for attempt in range(retries + 1):
+            req = urllib.request.Request(GEMINI_URL.format(model=model), data=json.dumps(body).encode(), method="POST",
+                                         headers={"Content-Type": "application/json", "x-goog-api-key": self.key})
+            try:
+                return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+            except urllib.error.HTTPError as e:
+                msg = e.read()[:800]
+                if e.code in (429, 503) and b"limit: 0" not in msg and attempt < retries:
+                    wait = 30 * 2 ** attempt
+                    print(f"Gemini {e.code}, retry {attempt + 1}/{retries} in {wait}s", file=sys.stderr)
+                    time.sleep(wait)
+                    continue
+                raise ModelError(f"Gemini HTTP {e.code}: {msg!r}") from None
 
 
 def gemini_body(system: Any, messages: list, tools: Optional[list], max_tokens: int, effort: Optional[str]) -> dict:
