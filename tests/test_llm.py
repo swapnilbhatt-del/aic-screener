@@ -53,6 +53,7 @@ def conn():
 def cfg():
     c = copy.deepcopy(config.load())
     c["ai"]["spend_limits_inr_per_day"] = {"alert": 5, "stop": 10}     # small, so a few fake calls cross them
+    c["ai"]["models"] = {k: MODEL for k in c["ai"]["models"]}           # these tests use the Anthropic fake
     return c
 
 
@@ -177,7 +178,9 @@ def test_research_request_has_web_tools():
 
 
 @needs_data
-def test_run_writes_output_and_skips_when_cached(conn, tmp_path, monkeypatch):
+def test_run_writes_output_and_skips_when_cached(conn, cfg, tmp_path, monkeypatch):
+    cfg["ai"]["spend_limits_inr_per_day"] = {"alert": 1000, "stop": 10000}
+    monkeypatch.setattr(config, "load", lambda: cfg)
     fc = FakeClient(text='{"claims": []}', input_tokens=1000, output_tokens=100)
     r = runner.run(conn, "extraction", "Pumpwise", out_base=tmp_path, client=fc)
     out = json.loads((tmp_path / "claims" / "Pumpwise.raw.json").read_text())
@@ -202,3 +205,63 @@ def test_batch_refuses_data_dir_and_stops_at_kill_switch(conn, cfg, tmp_path, mo
     fc = FakeClient(text='{"claims": []}', input_tokens=200_000, output_tokens=100)
     r = runner.batch(conn, tmp_path, client=fc)
     assert r["stopped"] and 0 < fc.calls < 30 and r["cost_inr"] > 0
+
+
+# ---- Gemini ------------------------------------------------------------------------------
+GEM = "gemini-4-carbon"
+
+
+class FakeGemini:
+    gateway_name = "gemini-test"
+
+    def __init__(self, text='{"ok": true}', finish="STOP", grounding=None):
+        self.bodies, self.text, self.finish, self.grounding = [], text, finish, grounding
+
+    def generate(self, model, body):
+        self.bodies.append((model, body))
+        cand = {"content": {"role": "model", "parts": [{"text": "thinking...", "thought": True}, {"text": self.text}]},
+                "finishReason": self.finish}
+        if self.grounding:
+            cand["groundingMetadata"] = self.grounding
+        return {"candidates": [cand], "responseId": "r1",
+                "usageMetadata": {"promptTokenCount": 10_000, "cachedContentTokenCount": 2_000,
+                                  "candidatesTokenCount": 800, "thoughtsTokenCount": 200}}
+
+
+def test_gemini_call_metered_with_thinking_as_output(conn, cfg):
+    fg = FakeGemini()
+    r = ask(conn, cfg, fg, model=GEM)
+    assert r["text"] == '{"ok": true}'                                     # thought parts are not the answer
+    assert r["usage"] == {"input_tokens": 8_000, "output_tokens": 1_000, "cache_read_tokens": 2_000,
+                          "cache_write_tokens": 0, "web_searches": 0}
+    usd = (8_000 * 2.00 + 1_000 * 10.00 + 2_000 * 0.10) / 1e6
+    assert r["cost_inr"] == pytest.approx(usd * cfg["ai"]["usd_inr"], abs=1e-3)
+    model, body = fg.bodies[0]
+    assert model == GEM and body["systemInstruction"]["parts"][0]["text"] == "sys"
+    assert body["generationConfig"]["responseMimeType"] == "application/json"
+    assert body["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "HIGH"}
+
+
+def test_gemini_research_uses_google_search_and_bills_queries(conn, cfg):
+    g = {"webSearchQueries": ["a", "b", "c"], "groundingChunks": [{"web": {"uri": "https://x.in/a", "title": "x.in"}}]}
+    fg = FakeGemini(grounding=g)
+    r = llm.call(conn, "research", [{"role": "user", "content": "q"}], client=fg, cfg=cfg, model=GEM, max_tokens=100,
+                 tools=runner.WEB_TOOLS)
+    body = fg.bodies[0][1]
+    assert body["tools"] == [{"googleSearch": {}}] and "responseMimeType" not in body["generationConfig"]
+    assert r["usage"]["web_searches"] == 3
+    assert r["content"][1]["sources"] == [{"uri": "https://x.in/a", "title": "x.in"}]
+
+
+def test_gemini_safety_block_is_a_refusal_and_max_tokens_maps(conn, cfg):
+    with pytest.raises(llm.ModelError, match="refused"):
+        ask(conn, cfg, FakeGemini(finish="SAFETY"), model=GEM)
+    assert ask(conn, cfg, FakeGemini(finish="MAX_TOKENS"), model=GEM, content="2")["stop_reason"] == "max_tokens"
+
+
+def test_gemini_passes_the_kill_switch(conn, cfg):
+    llm.manual_stop(conn, "Kushal", "test", cfg)
+    fg = FakeGemini()
+    with pytest.raises(llm.SpendStopped):
+        ask(conn, cfg, fg, model=GEM)
+    assert fg.bodies == []

@@ -6,7 +6,8 @@ cap and kill. Every call made by the pipeline goes through `call()`:
   1. kill switch: refused if today's spend reached `ai.spend_limits_inr_per_day.stop`, if a partner pulled the
      manual stop, or if this call's worst case would cross the stop. A refused call is still logged ('blocked').
   2. cache: an identical request (model, system, messages, tools, effort) is served from `llm_cache` at no cost.
-  3. call: Anthropic Messages API (official SDK), via the Portkey gateway when PORTKEY_API_KEY is set.
+  3. call: by model name. `claude-*` -> Anthropic Messages API (official SDK), via Portkey when PORTKEY_API_KEY
+     is set. `gemini-*` -> Gemini generateContent (REST, GEMINI_API_KEY); research uses Google Search grounding.
   4. meter: tokens and cost (USD and INR, prices from config) appended to `ai_calls` (append-only ledger).
   5. alert: crossing `alert` records an alert event; crossing `stop` engages the kill switch for the day.
   6. trace: a Langfuse trace + generation when LANGFUSE_PUBLIC_KEY/SECRET_KEY are set (never blocks the call).
@@ -24,6 +25,7 @@ import os
 import sqlite3
 import sys
 import time
+import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime
@@ -74,6 +76,77 @@ def make_client():
     return anthropic.Anthropic()
 
 
+def provider(model: str) -> str:
+    return "gemini" if model.startswith("gemini-") else "anthropic"
+
+
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+GEMINI_FINISH = {"STOP": "end_turn", "MAX_TOKENS": "max_tokens", "SAFETY": "refusal", "PROHIBITED_CONTENT": "refusal",
+                 "BLOCKLIST": "refusal", "SPII": "refusal", "RECITATION": "refusal"}
+GEMINI_THINKING = {"low": "LOW", "medium": "MEDIUM", "high": "HIGH"}
+
+
+class GeminiClient:
+    """Gemini REST (generateContent) with the API key in the x-goog-api-key header. No SDK dependency."""
+    gateway_name = "gemini"
+
+    def __init__(self, key: Optional[str] = None):
+        self.key = key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not self.key:
+            raise ModelError("GEMINI_API_KEY is not set (.env)")
+
+    def generate(self, model: str, body: dict, timeout: int = 600) -> dict:
+        req = urllib.request.Request(GEMINI_URL.format(model=model), data=json.dumps(body).encode(), method="POST",
+                                     headers={"Content-Type": "application/json", "x-goog-api-key": self.key})
+        try:
+            return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+        except urllib.error.HTTPError as e:
+            raise ModelError(f"Gemini HTTP {e.code}: {e.read()[:500]!r}") from None
+
+
+def gemini_body(system: Any, messages: list, tools: Optional[list], max_tokens: int, effort: Optional[str]) -> dict:
+    """Anthropic-shaped request -> Gemini generateContent body. Web tools become Google Search grounding."""
+    def text_of(c):
+        if isinstance(c, str):
+            return c
+        return "".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+    body: Dict[str, Any] = {
+        "contents": [{"role": "model" if m["role"] == "assistant" else "user", "parts": [{"text": text_of(m["content"])}]}
+                     for m in messages],
+        "generationConfig": {"maxOutputTokens": max_tokens}}
+    if system is not None:
+        body["systemInstruction"] = {"parts": [{"text": system if isinstance(system, str) else text_of(system)}]}
+    if effort in GEMINI_THINKING:
+        body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": GEMINI_THINKING[effort]}
+    if tools and any(t.get("name") in ("web_search", "web_fetch") for t in tools):
+        body["tools"] = [{"googleSearch": {}}]
+    else:
+        body["generationConfig"]["responseMimeType"] = "application/json"
+    return body
+
+
+def gemini_result(resp: dict) -> dict:
+    """Gemini response -> the same shape `call()` returns for Anthropic (text, content, stop_reason, usage)."""
+    cand = (resp.get("candidates") or [{}])[0]
+    parts = (cand.get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
+    u = resp.get("usageMetadata") or {}
+    cached = u.get("cachedContentTokenCount", 0) or 0
+    gm = cand.get("groundingMetadata") or {}
+    usage = {"input_tokens": (u.get("promptTokenCount", 0) or 0) - cached + (u.get("toolUsePromptTokenCount", 0) or 0),
+             "output_tokens": (u.get("candidatesTokenCount", 0) or 0) + (u.get("thoughtsTokenCount", 0) or 0),
+             "cache_read_tokens": cached, "cache_write_tokens": 0,
+             "web_searches": len(gm.get("webSearchQueries") or [])}
+    content = [{"type": "text", "text": text}]
+    if gm:
+        content.append({"type": "grounding", "queries": gm.get("webSearchQueries") or [],
+                        "sources": [{"uri": c["web"].get("uri"), "title": c["web"].get("title")}
+                                    for c in gm.get("groundingChunks") or [] if c.get("web")]})
+    reason = cand.get("finishReason") or ("refusal" if (resp.get("promptFeedback") or {}).get("blockReason") else "OTHER")
+    return {"text": text, "content": content, "stop_reason": GEMINI_FINISH.get(reason, reason.lower()),
+            "usage": usage, "id": resp.get("responseId")}
+
+
 # ---- money -----------------------------------------------------------------------------
 def today(cfg: dict, now: Optional[datetime] = None) -> str:
     return (now or datetime.now(ZoneInfo(cfg["ai"]["day_tz"]))).astimezone(ZoneInfo(cfg["ai"]["day_tz"])).date().isoformat()
@@ -82,8 +155,8 @@ def today(cfg: dict, now: Optional[datetime] = None) -> str:
 def cost_usd(model: str, usage: Dict[str, int], cfg: dict) -> float:
     p = cfg["ai"]["prices_usd_per_mtok"][model]
     return (usage.get("input_tokens", 0) * p["input"] + usage.get("output_tokens", 0) * p["output"]
-            + usage.get("cache_read_tokens", 0) * p["cache_read"] + usage.get("cache_write_tokens", 0) * p["cache_write"]
-            ) / 1e6 + usage.get("web_searches", 0) * cfg["ai"]["web_search_usd_per_1k"] / 1000
+            + usage.get("cache_read_tokens", 0) * p["cache_read"] + usage.get("cache_write_tokens", 0) * p.get("cache_write", 0)
+            ) / 1e6 + usage.get("web_searches", 0) * p.get("web_search_per_1k", cfg["ai"]["web_search_usd_per_1k"]) / 1000
 
 
 def spend_inr(conn, day: Optional[str] = None) -> float:
@@ -195,7 +268,8 @@ def call(conn: sqlite3.Connection, task: str, messages: List[dict], system: Any 
     if model not in ai["prices_usd_per_mtok"]:
         raise ModelError(f"no price configured for {model}; add it to ai.prices_usd_per_mtok before using it")
     d = today(cfg)
-    gw = gateway() if client is None else getattr(client, "gateway_name", "test")
+    prov = provider(model)
+    gw = (gateway() if prov == "anthropic" else "gemini") if client is None else getattr(client, "gateway_name", "test")
 
     ks = kill_state(conn, d)
     spent = spend_inr(conn, d)
@@ -214,40 +288,46 @@ def call(conn: sqlite3.Connection, task: str, messages: List[dict], system: Any 
             cid = _log(conn, cfg, task=task, company=company, model=model, gw="cache", usage={}, status="cached", day=d)
             return {**r, "cost_inr": 0.0, "cached": True, "call_id": cid}
 
-    client = client or make_client()
-    params: Dict[str, Any] = {"model": model, "max_tokens": max_tokens, "messages": messages}
-    if system is not None:
-        params["system"] = system
-    if tools:
-        params["tools"] = tools
-    extra: Dict[str, Any] = {"cache_control": {"type": "ephemeral"}, "fallbacks": "default"}
-    if effort:
-        extra["output_config"] = {"effort": effort}
     started = time.time()
     try:
-        with client.messages.stream(**params, extra_body=extra, extra_headers={"anthropic-beta": FALLBACK_BETA}) as s:
-            msg = s.get_final_message()
+        if prov == "gemini":
+            client = client or GeminiClient()
+            r = gemini_result(client.generate(model, gemini_body(system, messages, tools, max_tokens, effort)))
+            usage, content, text, stop, req_id = r["usage"], r["content"], r["text"], r["stop_reason"], r["id"]
+        else:
+            client = client or make_client()
+            params: Dict[str, Any] = {"model": model, "max_tokens": max_tokens, "messages": messages}
+            if system is not None:
+                params["system"] = system
+            if tools:
+                params["tools"] = tools
+            extra: Dict[str, Any] = {"cache_control": {"type": "ephemeral"}, "fallbacks": "default"}
+            if effort:
+                extra["output_config"] = {"effort": effort}
+            with client.messages.stream(**params, extra_body=extra, extra_headers={"anthropic-beta": FALLBACK_BETA}) as s:
+                msg = s.get_final_message()
+            usage = _usage(msg)
+            content = [b.model_dump() if hasattr(b, "model_dump") else dict(b) for b in msg.content]
+            text = "".join(b.get("text", "") for b in content if b.get("type") == "text")
+            stop, req_id = msg.stop_reason, getattr(msg, "_request_id", None) or getattr(msg, "id", None)
     except Exception as e:
         _log(conn, cfg, task=task, company=company, model=model, gw=gw, usage={}, status="error",
              latency_ms=int((time.time() - started) * 1000), error=f"{type(e).__name__}: {e}"[:500], day=d)
         raise
     ended = time.time()
-    usage = _usage(msg)
-    content = [b.model_dump() if hasattr(b, "model_dump") else dict(b) for b in msg.content]
-    text = "".join(b.get("text", "") for b in content if b.get("type") == "text")
-    out = {"text": text, "content": content, "stop_reason": msg.stop_reason, "usage": usage}
+    out = {"text": text, "content": content, "stop_reason": stop, "usage": usage}
     usd = cost_usd(model, usage, cfg)
     trace = _langfuse(task, company, model, usage, usd, started, ended, system, messages, text)
     cid = _log(conn, cfg, task=task, company=company, model=model, gw=gw, usage=usage, status="ok",
-               latency_ms=int((ended - started) * 1000), request_id=getattr(msg, "_request_id", None) or getattr(msg, "id", None),
+               latency_ms=int((ended - started) * 1000), request_id=req_id,
                trace_id=trace, day=d)
-    if use_cache and msg.stop_reason == "end_turn":
+    if use_cache and stop == "end_turn":
         conn.execute("INSERT OR REPLACE INTO llm_cache (key, model, response, created_at) VALUES (?, ?, ?, ?)",
                      (key, model, json.dumps(out), datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()))
         conn.commit()
     _check_limits(conn, cfg, d)
-    if msg.stop_reason == "refusal":
-        raise ModelError(f"model refused ({getattr(msg, 'stop_details', None)}); logged as call {cid}")
+    if stop == "refusal":
+        raise ModelError(f"model refused; logged as call {cid}")
     return {**out, "cost_inr": round(usd * ai["usd_inr"], 4), "cached": False, "call_id": cid}
 
 

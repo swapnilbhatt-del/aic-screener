@@ -20,6 +20,7 @@ def test_unmetered_system_cost_is_not_imputed():
 
 def test_metered_calls_feed_the_roi():
     conn, cfg = db.connect(":memory:"), copy.deepcopy(config.load())
+    cfg["ai"]["models"]["scoring"] = "claude-opus-5-5"                  # the Anthropic fake client
     for co in ("A", "B"):
         llm.call(conn, "scoring", [{"role": "user", "content": co}], company=co, client=FakeClient(), cfg=cfg, max_tokens=100)
     r = costs.build(conn, cfg)

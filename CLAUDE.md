@@ -58,3 +58,5 @@ Run tests: `.venv/bin/python -m pytest -q`
 ## AI cost and production (user, 2026-11-20)
 
 Every model call goes through `aic/llm.py`, which writes it to the append-only `ai_calls` ledger in ₹ and applies the cache, the daily alert (₹1,000) and the stop (₹10,000). Only a named human can release a stop. Never call a model API outside this client. `aic/runner.py` runs extraction, research and scoring as API calls. Riya's ₹1,000/h and USD/INR 88 are placeholders. Follow-ups: max 3, then a partner closes the thread (never auto-rejected). Calls stay on Tue/Thu. Kushal joins first calls for deeptech only. See `reports/production_readiness.md`.
+
+User, 2026-11-21: run on Gemini. `ai.models` = `gemini-4-carbon` (no Stable badge; price doubles 2026-12-01). `gemini-*` goes to the Gemini REST API with `GEMINI_API_KEY`; research uses Google Search grounding, and the sources it returned are kept in the output's `grounding` field. Portkey and Langfuse keys can only come from accounts the user creates.

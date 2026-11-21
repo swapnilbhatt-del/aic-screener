@@ -48,3 +48,15 @@ what was built, and records what was added. Decisions marked "user" were made by
 Not yet verified against live services: the Portkey header set, the Langfuse ingestion payload and the server-side
 refusal `fallbacks` parameter through Portkey. These are tested with a fake client only. Check each on the first
 real call; the ledger records any error.
+
+## Update 2026-11-21: Gemini
+
+You asked to run on your Gemini key. `ai.models` now uses `gemini-4-carbon`, which Google's model page calls its "most capable reasoning model". Prices come from Google's pricing page, accessed 2026-11-21: $2 input, $10 output (thinking included), $0.10 cached input per 1M tokens, and search grounding at $14 per 1,000 searches.
+- **Price change:** Carbon's price doubles on 2026-12-01. Edit the price line then, or the ledger will undercount.
+- **Model status:** Carbon has no "Stable" badge. The stable alternative is `gemini-3.8-flash`.
+- **Research:** uses Google Search grounding instead of Anthropic web search. Each output file keeps the queries and sources Google returned (`grounding`) next to the model's own citations, so a reviewer can check them. Grounding sources may be Google redirect links rather than the publisher's URL. The validator still requires an http(s) URL on every finding.
+- **Portkey:** routes Claude calls only, for now. Gemini calls go direct. Wiring Gemini through Portkey's OpenAI-compatible endpoint would lose Google Search grounding, so it waits until there is a Portkey account to test against.
+- **Accounts:** both key APIs you pointed to need an existing account.
+  - Portkey's `POST /v1/api-keys/{type}/{sub-type}` is authenticated with an existing `x-portkey-api-key`.
+  - Langfuse's organizations API is "only available on self-hosted instances, not on Langfuse Cloud" and needs an admin key.
+  - So the first key for each has to come from a sign-up you do yourself.

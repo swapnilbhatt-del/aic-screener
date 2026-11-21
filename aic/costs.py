@@ -46,7 +46,7 @@ def _build_session(cfg) -> Optional[dict]:
     m = json.loads(p.read_text())
     n = m["batch_size"]
     per_app = sum(a["tokens"] for a in m["agents"] if a["stage"] in ("extraction", "research", "research_fund", "scoring")) / n
-    price = cfg["ai"]["prices_usd_per_mtok"][cfg["ai"]["models"]["scoring"]]
+    price = cfg["ai"]["prices_usd_per_mtok"]["claude-opus-5-5"]     # the build session ran on Claude Opus
     fx = cfg["ai"]["usd_inr"]
     return {"tokens_per_application": round(per_app),
             "if_all_cache_reads_inr": round(per_app * price["cache_read"] / 1e6 * fx, 1),

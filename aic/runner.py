@@ -110,6 +110,9 @@ def run(conn, stage: str, company: str, force: bool = False, model: Optional[str
         raise RunError(f"{stage} {company}: output hit max_tokens; nothing written")
     rec = llm.json_from(r["text"])
     rec.setdefault("company", company)
+    grounding = [b for b in r["content"] if b.get("type") == "grounding"]
+    if grounding:          # Gemini: what Google Search actually returned, kept beside the model's own citations
+        rec["grounding"] = {"queries": grounding[0]["queries"], "sources": grounding[0]["sources"]}
     rec[{"extraction": "extracted_by", "research": "researched_by", "scoring": "scored_by"}[stage]] = \
         f"api:{model or config.load()['ai']['models'][stage]}"
     errs = validate_output(stage, company, rec)
