@@ -19,7 +19,12 @@ def _metered(conn, cfg) -> dict:
     per_co = rows("SELECT company, count(*), round(sum(cost_inr), 2), sum(input_tokens), sum(output_tokens), "
                   "sum(cache_read_tokens) FROM ai_calls WHERE company IS NOT NULL AND status IN ('ok', 'cached') "
                   "GROUP BY company ORDER BY 3 DESC")
-    n_apps = len(per_co)
+    # An application counts only when all three stages ran (ok or from cache); a partial run is not a per-application cost.
+    stages = {r[0]: set(r[1].split(",")) for r in conn.execute(
+        "SELECT company, group_concat(DISTINCT task) FROM ai_calls WHERE company IS NOT NULL AND status IN ('ok', 'cached') "
+        "GROUP BY company")}
+    complete = [r for r in per_co if {"extraction", "research", "scoring"} <= stages.get(r[0], set())]
+    n_apps = len(complete)
     total = llm.spend_inr(conn)
     ok = conn.execute("SELECT count(*), coalesce(avg(input_tokens), 0) FROM ai_calls WHERE status='ok'").fetchone()
     return {
@@ -28,8 +33,9 @@ def _metered(conn, cfg) -> dict:
         "avg_input_tokens": round(ok[1]),
         "cached_calls": conn.execute("SELECT count(*) FROM ai_calls WHERE status='cached'").fetchone()[0],
         "blocked_calls": conn.execute("SELECT count(*) FROM ai_calls WHERE status='blocked'").fetchone()[0],
-        "per_application_inr": round(sum(r[2] for r in per_co) / n_apps, 2) if n_apps else None,
+        "per_application_inr": round(sum(r[2] for r in complete) / n_apps, 2) if n_apps else None,
         "applications": n_apps,
+        "partial_applications": [{"company": r[0], "stages": sorted(stages.get(r[0], []))} for r in per_co if r not in complete],
         "by_day": rows("SELECT day, count(*), round(sum(cost_inr), 2) FROM ai_calls GROUP BY day ORDER BY day DESC LIMIT 30"),
         "by_task": rows("SELECT task, count(*), round(sum(cost_inr), 2) FROM ai_calls GROUP BY task ORDER BY 3 DESC"),
         "by_model": rows("SELECT model, count(*), round(sum(cost_inr), 2) FROM ai_calls GROUP BY model ORDER BY 3 DESC"),

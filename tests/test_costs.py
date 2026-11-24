@@ -20,10 +20,13 @@ def test_unmetered_system_cost_is_not_imputed():
 
 def test_metered_calls_feed_the_roi():
     conn, cfg = db.connect(":memory:"), copy.deepcopy(config.load())
-    cfg["ai"]["models"]["scoring"] = "claude-opus-5-5"                  # the Anthropic fake client
+    cfg["ai"]["models"] = {k: "claude-opus-5-5" for k in cfg["ai"]["models"]}   # the Anthropic fake client
     for co in ("A", "B"):
-        llm.call(conn, "scoring", [{"role": "user", "content": co}], company=co, client=FakeClient(), cfg=cfg, max_tokens=100)
+        for task in ("extraction", "research", "scoring"):
+            llm.call(conn, task, [{"role": "user", "content": co + task}], company=co, client=FakeClient(), cfg=cfg, max_tokens=100)
+    llm.call(conn, "extraction", [{"role": "user", "content": "C"}], company="C", client=FakeClient(), cfg=cfg, max_tokens=100)
     r = costs.build(conn, cfg)
-    per_app = (10_000 * 4 + 1_000 * 20) / 1e6 * cfg["ai"]["usd_inr"]
+    per_app = 3 * (10_000 * 4 + 1_000 * 20) / 1e6 * cfg["ai"]["usd_inr"]
+    assert r["metered"]["partial_applications"] == [{"company": "C", "stages": ["extraction"]}]   # not counted
     assert r["metered"]["applications"] == 2 and abs(r["roi"]["system_per_application_inr"] - per_app) < 0.01
     assert r["roi"]["system_share_pct"] == round(100 * r["metered"]["per_application_inr"] / 500, 1)
