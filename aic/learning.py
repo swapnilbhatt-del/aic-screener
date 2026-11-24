@@ -260,6 +260,7 @@ def export(conn=None, cfg: Optional[dict] = None, out: Path = OUT) -> dict:
         (out / f"{name}.jsonl").write_text("".join(json.dumps({"messages": p["messages"]}, ensure_ascii=False) + "\n" for p in ps))
     manifest = {"pairs": len(kept), "duplicates_removed": dups, "dropped_for_sector_cap": dropped,
                 "split": {k: len(v) for k, v in parts.items()}, "by_task": dict(Counter(p["task"] for p in kept)),
+                "bar": cfg["finetune"]["bar"], "bar_is_proposal": True,
                 "by_sector": dict(Counter(p["sector"] for p in kept)), "max_sector_share": cap,
                 "format": "chat messages (system, user, assistant); same prompts as the live app",
                 "note": "Founder data: keep in-house (self-managed route). Hold out test.jsonl until the final evaluation."}

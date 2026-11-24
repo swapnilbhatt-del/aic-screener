@@ -51,3 +51,30 @@ At most 5 lessons, newest first (config `feedback.inject_min_agreeing_companies`
 There is no feedback yet: 0 corrections, 0 partner decisions and 0 approved emails. Every rate is shown as "—", not as zero. The readiness check says "not yet", and the dataset is empty. Per the lecture, fine-tuning before launch needs historical data that the case doesn't provide, so this waits for about 3 months of live feedback.
 
 Emails are drafted from templates, not by a model. So the email signal measures how much Riya changes the template drafts, and no email lessons go into a prompt.
+
+## The Unsloth notebook (`notebooks/unsloth_finetune.ipynb`)
+
+To open it in Colab: File → Upload notebook (or open it from GitHub), then choose a T4 GPU runtime. It follows Unsloth's current Qwen3-4B notebook, with its install line and pinned versions (transformers 4.57.6, trl 0.22.2):
+
+1. Loads `train/val/test.jsonl` and `manifest.json` from `python -m aic.learning export`. The bar is read from the manifest, not written into the notebook.
+2. Loads `unsloth/Qwen3-4B-Instruct-2507` in 4-bit and applies its chat template. It drops examples longer than `MAX_SEQ_LENGTH` and reports how many it dropped, rather than truncating them, because truncation would cut off the answer.
+3. **Baseline first:** the untuned model is scored on the test split, so the metrics are fixed before training.
+   - Scoring disagreement: the share of criteria whose 0–5 score differs from the partner-corrected label. A missing or unparseable answer counts as a disagreement.
+   - Also reported: within ±1, mean absolute error and valid JSON.
+   - Email: how far the model's text is from what Riya approved.
+4. Trains LoRA adapters on the answers only, and stops early when validation loss rises.
+5. Draws the loss curves.
+6. Scores the tuned model on the held-out test split, then gives a verdict. It's "do not deploy" unless it beats the baseline and gets under the bar. Even then it's only a candidate for Kushal to confirm.
+7. Saves the adapter and `finetune_result.json`. Merged and GGUF exports are switched off by default.
+
+`SMOKE_TEST = True` trains on made-up examples only to prove the pipeline runs. Its numbers say nothing about quality.
+
+Not run on a GPU here. Tests check that every cell is valid Python, that the smoke data loads, and that the notebook recognises the export's format. The scoring and verdict logic was also run locally with a fake model.
+
+**Known limit: scoring pairs are long.** A scoring prompt carries the full claims, checks and research: about 98k–139k characters, roughly 30–40k tokens. That won't fit a free T4 at `MAX_SEQ_LENGTH = 4096`, so those pairs are dropped and reported. Two ways round it:
+- run on a bigger GPU with a longer limit;
+- export shorter pairs, one criterion each, with only its evidence.
+
+Email pairs fit.
+
+**Privacy:** Colab runs on Google's machines. For founder data that has to stay in-house, run the same notebook on the fund's own GPU.

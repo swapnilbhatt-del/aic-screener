@@ -156,3 +156,52 @@ def test_export_caps_a_dominant_sector(conn, tmp_path):
         correct(conn, co)
     m = learning.export(conn, out=tmp_path)                        # cap 40% of 4 = 1 per sector
     assert m["by_sector"].get("fintech", 0) <= 1 and len(m["dropped_for_sector_cap"]) >= 2
+
+
+# ---- Unsloth notebook -----------------------------------------------------------------------------------
+NB = learning.ROOT / "notebooks" / "unsloth_finetune.ipynb"
+
+
+def _cells():
+    nb = json.loads(NB.read_text())
+    return ["".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"]
+
+
+def _python(src):          # notebook magics and shell lines become `pass`; the rest must be plain Python
+    out = []
+    for l in src.splitlines():
+        body = l.lstrip()
+        out.append(l[:len(l) - len(body)] + "pass" if body.startswith(("!", "%")) else l)
+    return "\n".join(out)
+
+
+def test_notebook_cells_are_valid_python():
+    for src in _cells():
+        compile(_python(src), "<cell>", "exec")
+
+
+def test_notebook_reads_the_bar_from_the_manifest_not_hardcoded():
+    text = "".join(_cells())
+    assert 'BAR = manifest["bar"]["disagreement_above"]' in text
+    assert text.count('"disagreement_above": 0.30') == 1         # only the made-up smoke-test manifest
+    assert "BAR =" not in text.replace('BAR = manifest["bar"]["disagreement_above"]', "")
+
+
+def test_notebook_smoke_data_and_task_detection(tmp_path):
+    settings, data = _cells()[1], _cells()[2]
+    ns = {}
+    exec(_python(settings).replace("SMOKE_TEST = False", "SMOKE_TEST = True")
+         .replace('DATA_DIR = "/content/finetune"', f'DATA_DIR = "{tmp_path}"'), ns)
+    exec(_python(data), ns)
+    assert (len(ns["train"]), len(ns["val"]), len(ns["test"])) == (45, 9, 6) and ns["BAR"] == 0.30
+    email = {"messages": [{"role": "system", "content": "Rewrite this All In Capital outreach draft the way Riya would send it."}]}
+    assert ns["task_of"](email) == "email" and ns["task_of"](ns["train"][0]) == "scoring"
+
+
+@needs_data
+def test_notebook_task_detection_matches_the_export(conn):
+    oid = draft(conn)
+    outreach.approve_email(conn, oid, "Riya")
+    pair = [p for p in learning.build_pairs(conn, config.load()) if p["task"] == "email"][0]
+    assert "Rewrite this All In Capital outreach draft" in "".join(_cells()[2])
+    assert pair["messages"][0]["content"].startswith("Rewrite this All In Capital outreach draft")
