@@ -137,13 +137,12 @@ ai:
   models:                 # per task; change only after `python -m aic.runner compare` shows a cheaper model holds quality
     # user 2026-11-21: run on Gemini (key the user already has). gemini-4-carbon = Google's "most capable reasoning
     # model"; it has no "Stable" badge on the models page (2026-11-21). Claude models stay priced for `compare`.
-    # 2026-11-24 (user): back to Claude. The free Gemini key could not finish a batch (search refused, 503s).
-    # claude-opus-5-5 is what produced the existing scores, so metered results compare like for like.
-    # Gemini models stay priced below for `compare`.
-    extraction: claude-opus-5-5
-    research: claude-opus-5-5
-    scoring: claude-opus-5-5
-    drafting: claude-opus-5-5
+    # 2026-11-24 (user): use the Gemini key (free tier). On it, Google Search is refused (429) and calls get 503
+    # "high demand" intermittently, even one-line ones (1 in 3 in a test); larger calls fail more often.
+    extraction: gemini-3.5-flash-lite
+    research: gemini-3.5-flash-lite
+    scoring: gemini-3.5-flash-lite
+    drafting: gemini-3.5-flash-lite
   effort: {extraction: medium, research: high, scoring: high, drafting: low}
   prices_usd_per_mtok:    # Anthropic first-party list prices (claude-api reference, cached 2026-11-03)
     claude-opus-5-5:   {input: 4.00, output: 20.00, cache_read: 0.20, cache_write: 5.00}

@@ -83,3 +83,12 @@ Retry, 2026-11-24 (free tier, as you chose):
 - **CareCorner extraction:** 503 "high demand" after 4 retries.
 
 Stopped again. On this key, the free tier can't complete the batch.
+
+Third attempt, 2026-11-24 (you asked to use the Gemini key). I tested what triggers the 503s:
+- **CAPilot scoring:** 503 on `gemini-3.8-flash` and on `gemini-3.5-flash-lite`.
+- **Same request with other settings:** 503 at thinking high, medium and low, and at output caps of 32k and 16k.
+- **Request size:** 15k and 30k characters passed, 60k failed. Scoring requests are 98k–139k characters (the fund-wide research block alone is 47k).
+- **CareCorner extraction (4.4k characters):** 503 at output caps of 32k, 16k and 8k, at low thinking, with no thinking setting, and with a one-line system prompt.
+- **A one-line call, three times:** two OK, one 503.
+
+The 503s are capacity on Google's free tier, not anything in our requests. Larger calls fail more often, and it doesn't clear with retries over 7.5 minutes. No new stage completed.
