@@ -75,3 +75,11 @@ Measured so far:
 - **Claim count:** 35 claims, against 76 from the build-session (Claude) run. Not reviewed yet; that's `compare`'s job.
 
 Not measured: research, scoring, and a per-application cost. What it needs: billing enabled on the Gemini key (paid tier: search grounding, Carbon and higher priority), or a retry when Google is less busy.
+
+Retry, 2026-11-24 (free tier, as you chose):
+- **Small test call:** worked.
+- **Google Search:** still refused with 429.
+- **CAPilot scoring:** 503 "high demand" after 4 retries.
+- **CareCorner extraction:** 503 "high demand" after 4 retries.
+
+Stopped again. On this key, the free tier can't complete the batch.
