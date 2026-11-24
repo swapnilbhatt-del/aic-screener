@@ -98,6 +98,22 @@ feedback:
   similar_means: same criterion, same direction, distinct companies
   proposal_step: 5               # largest candidate weight move; shrinks (2, then 1) if it would zero a weight. A proposal, never applied
   proposal_offset: largest other criterion in the same group   # keeps group subtotals and the 100 total
+  # Feedback into the scoring prompt (user 2026-11-24, lecture 24 Nov): only lessons that 2+ other companies in the
+  # same sector agree on (same criterion, same direction), scope 'general', not flagged as a bad day or retracted.
+  inject_min_agreeing_companies: 2
+  inject_max_lessons: 5
+
+learning:
+  # Disagreement score: the gap between what the system recommended and what Riya/the partners did.
+  plateau_months: 3              # a signal has plateaued if its monthly rate moved less than plateau_band over this many months
+  plateau_band: 0.05
+
+finetune:
+  # PROPOSED bar for "consider fine-tuning" (user 2026-11-24: a proposal for Kushal to set, like oos_test).
+  bar: {disagreement_above: 0.30, sustained_months: 3, min_pairs: 200, repeat_mistake: 5}
+  split: {train: 0.75, val: 0.15, test: 0.10}     # lecture 24 Nov
+  max_sector_share: 0.40         # PROPOSED: no sector above 40% of the dataset (lecture: don't over-index on one industry)
+  route: self-managed            # lecture: Unsloth/Colab; founder data stays in-house. Base: a 2-8B Gemma, Qwen or Llama
 
 oos_test:
   # PROPOSED bar for trusting the band (Trust & limits page); Kushal to agree or change.

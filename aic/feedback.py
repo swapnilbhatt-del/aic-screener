@@ -7,7 +7,9 @@
 - propose(): when >= N corrections on one criterion move the same direction across distinct companies,
   write a candidate diff of config/rubric.yaml to the weight_proposals table. Nothing here writes the config.
 
-  python -m aic.feedback add <Company> <Criterion> <human_score> "<reason>" <your name>
+  python -m aic.feedback add <Company> <Criterion> <human_score> "<reason>" <your name> [--this-case]
+  python -m aic.feedback flag correction|email_edit <id> bad_day|retracted "<reason>" <your name>
+  python -m aic.feedback lessons <Company>     what the scoring prompt would be given for this company
   python -m aic.feedback list
   python -m aic.feedback surface <Company>
   python -m aic.feedback propose
@@ -57,7 +59,8 @@ def model_score(company: str, criterion: str, scores_dir: Path = SCORES) -> int:
 
 def add_correction(conn: sqlite3.Connection, company: str, criterion: str, human_score: int, reason: str,
                    corrected_by: str, cfg: Optional[dict] = None, scores_dir: Path = SCORES,
-                   apps_dir: Path = APPS) -> int:
+                   apps_dir: Path = APPS, scope: str = "general") -> int:
+    """scope 'this_case' marks an exception for this company only: it is logged and counted, never reused."""
     cfg = cfg or config.load()
     if criterion not in cfg["criteria"]:
         raise FeedbackError(f"unknown criterion {criterion}")
@@ -66,11 +69,13 @@ def add_correction(conn: sqlite3.Connection, company: str, criterion: str, human
     reason = reason.strip()
     if not reason or "\n" in reason or len(reason) > 200:
         raise FeedbackError("reason must be one line, at most 200 characters")
+    if scope not in ("general", "this_case"):
+        raise FeedbackError("scope must be 'general' or 'this_case'")
     ms = model_score(company, criterion, scores_dir)
     cur = conn.execute(
-        "INSERT INTO corrections (company, sector, criterion, model_score, human_score, reason, corrected_by) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (company, company_sector(company, cfg, apps_dir), criterion, ms, human_score, reason, corrected_by))
+        "INSERT INTO corrections (company, sector, criterion, model_score, human_score, reason, corrected_by, scope) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (company, company_sector(company, cfg, apps_dir), criterion, ms, human_score, reason, corrected_by, scope))
     conn.commit()
     return cur.lastrowid
 
@@ -93,6 +98,52 @@ def surface(conn: sqlite3.Connection, company: str, sector: str, criteria: Optio
                         f"{r['criterion']} from {r['model_score']} to {r['human_score']} because {r['reason']}")
         out.setdefault(r["criterion"], []).append(r)
     return out
+
+
+def flag(conn: sqlite3.Connection, target: str, target_id: int, kind: str, reason: str, by: str) -> int:
+    """A named human marks a correction or email edit as a bad-day edit or retracts it. It is then never reused."""
+    table = {"correction": "corrections", "email_edit": "email_edits"}.get(target)
+    if not table or not conn.execute(f"SELECT 1 FROM {table} WHERE id=?", (target_id,)).fetchone():
+        raise FeedbackError(f"no {target} with id {target_id}")
+    cur = conn.execute("INSERT INTO feedback_flags (target, target_id, kind, reason, flagged_by) VALUES (?, ?, ?, ?, ?)",
+                       (target, target_id, kind, reason.strip(), by))
+    conn.commit()
+    return cur.lastrowid
+
+
+def flagged_ids(conn: sqlite3.Connection, target: str) -> set:
+    return {r[0] for r in conn.execute("SELECT target_id FROM feedback_flags WHERE target=?", (target,))}
+
+
+def usable_corrections(conn: sqlite3.Connection) -> List[dict]:
+    """Corrections that may be reused: scope 'general' and not flagged as a bad day or retracted."""
+    bad = flagged_ids(conn, "correction")
+    return [r for r in _rows(conn) if r.get("scope", "general") == "general" and r["id"] not in bad]
+
+
+def lessons(conn: sqlite3.Connection, company: str, cfg: Optional[dict] = None, apps_dir: Path = APPS) -> List[dict]:
+    """Lessons for the scoring prompt (user 2026-11-24: only when 2+ agree).
+
+    A lesson is a group of usable corrections on the same criterion, in the same direction, in this company's
+    sector, from at least `feedback.inject_min_agreeing_companies` OTHER companies. Each keeps every reason, so
+    the model sees why, not just what. Newest groups first, at most `feedback.inject_max_lessons`.
+    """
+    cfg = cfg or config.load()
+    sector = company_sector(company, cfg, apps_dir)
+    groups: Dict[tuple, List[dict]] = {}
+    for r in usable_corrections(conn):
+        if r["company"] != company and r["sector"] == sector:
+            groups.setdefault((r["criterion"], _direction(r)), []).append(r)
+    out = []
+    for (crit, d), rs in groups.items():
+        cos = sorted({r["company"] for r in rs})
+        if len(cos) >= cfg["feedback"]["inject_min_agreeing_companies"]:
+            out.append({"criterion": crit, "direction": d, "sector": sector, "companies": cos,
+                        "moves": [f"{r['model_score']}->{r['human_score']}" for r in rs],
+                        "reasons": [f"{r['company']}: {r['reason']} ({r['corrected_by']}, {r['corrected_at'][:10]})" for r in rs],
+                        "latest": max(r["corrected_at"] for r in rs), "correction_ids": [r["id"] for r in rs]})
+    out.sort(key=lambda x: x["latest"], reverse=True)
+    return out[:cfg["feedback"]["inject_max_lessons"]]
 
 
 def _direction(r: dict) -> str:
@@ -175,8 +226,13 @@ if __name__ == "__main__":
     a = sys.argv[1:]
     conn = db.connect()
     cfg = config.load()
-    if a[:1] == ["add"] and len(a) == 6:
-        print("correction", add_correction(conn, a[1], a[2], int(a[3]), a[4], a[5], cfg))
+    if a[:1] == ["add"] and len(a) in (6, 7):
+        print("correction", add_correction(conn, a[1], a[2], int(a[3]), a[4], a[5], cfg,
+                                           scope="this_case" if "--this-case" in a else "general"))
+    elif a[:1] == ["flag"] and len(a) == 6:
+        print("flag", flag(conn, a[1], int(a[2]), a[3], a[4], a[5]))
+    elif a[:1] == ["lessons"] and len(a) == 2:
+        print(json.dumps(lessons(conn, a[1], cfg), indent=1))
     elif a[:1] == ["list"]:
         for r in _rows(conn):
             print(f"{r['id']:3} {r['corrected_at']} {r['company']:11} {r['sector']:15} {r['criterion']} "

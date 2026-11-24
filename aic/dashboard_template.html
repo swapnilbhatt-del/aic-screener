@@ -195,7 +195,7 @@ const BAND_SHORT = {call:"Call", partner_review:"Review", hold:"Hold", pass:"Pas
 const ICON = {call:"✓", partner_review:"!", hold:"‖", pass:"×"};
 const ORDER = ["call","partner_review","hold","pass"];
 const GROUPS = [["founder","Founder","--s1"],["path","Path","--s2"],["thesis","Thesis","--s3"],["structure","Structure","--s4"]];
-const PAGES = [["trust","Trust & limits","◎"],["gaps","What's missing","◌"],["time","Time & cost","◷"],["cost","AI cost & ROI","₹"]];
+const PAGES = [["learning","Feedback & fine-tuning","⇄"],["trust","Trust & limits","◎"],["gaps","What's missing","◌"],["time","Time & cost","◷"],["cost","AI cost & ROI","₹"]];
 function el(tag, attrs, ...kids){const e=document.createElement(tag);for(const [k,v] of Object.entries(attrs||{})){if(v==null)continue;if(k==="class")e.className=v;else if(k==="on")for(const [ev,f] of Object.entries(v))e.addEventListener(ev,f);else e.setAttribute(k,v);}for(const k of kids){if(k==null||k===false)continue;e.append(k instanceof Node?k:document.createTextNode(String(k)));}return e;}
 function safeUrl(u){try{const x=new URL(u);return (x.protocol==="https:"||x.protocol==="http:")?x.href:null;}catch(e){return null;}}
 function link(text, href, ext){if(!href)return document.createTextNode(text||"");const a=el("a",{href:href},text);if(ext){a.target="_blank";a.rel="noopener noreferrer";}return a;}
@@ -492,9 +492,58 @@ function costView(){const A=D.ai_cost;const v=el("div");v.append(head("Assurance
     el("section",{class:"card"},el("h2",{},"Before production"),table([["step","Step"],["status","Status"],["detail","Detail","small"]],A.readiness))));
   return v;}
 
+function pct(x){return x==null?"—":Math.round(x*100)+"%";}
+function learningView(){const L=D.learning;const v=el("div");
+  v.append(head("Feedback loop","Feedback & fine-tuning","The system learns from what Riya and the partners change. This page measures that gap (the disagreement score), shows what the scoring prompt would be taught, and says whether fine-tuning is justified yet."));
+  if(!L){v.append(el("section",{class:"card"},el("p",{},"No feedback data.")));return v;}
+  const S=L.disagreement,R=L.readiness;
+  const k=el("div",{class:"kpis"});const tile=(cls,label,val,hint)=>el("div",{class:"kpi "+cls,style:"cursor:default"},el("div",{class:"k"},label),el("div",{class:"v num"},val),el("div",{class:"h"},hint));
+  k.append(tile("k-pass","Band disagreement",pct(S.band.rate),S.band.compared?(S.band.compared+" decisions compared"):"no partner decision yet"),
+    tile("k-hold","Criteria corrected",pct(S.criteria.rate),S.criteria.reviewed_companies?(S.criteria.corrections+" corrections on "+S.criteria.reviewed_companies+" companies"):"no correction yet"),
+    tile("k-partner_review","Email changed by Riya",pct(S.email.rate),S.email.approved_emails?(S.email.edited+" of "+S.email.approved_emails+" emails edited"):"no approved email yet"),
+    tile("k-open","Fine-tuning pairs",String(R.checks[0].value.split(" ")[0]),"of "+R.bar.min_pairs+" proposed minimum"),
+    tile(R.ready?"k-call":"k-hold","Fine-tuning",R.ready?"Consider":"Not yet",R.ready?"after manual checks":"keep collecting"));
+  v.append(k);
+  const anyData=S.band.decided||S.criteria.corrections||S.email.approved_emails;
+  if(!anyData)v.append(el("div",{class:"note"},el("b",{},"No feedback yet."),el("span",{},"No partner decision, score correction or approved email is recorded, so every rate is shown as —, not as zero. The numbers fill in as Riya and the partners use the system.")));
+  const months=[...new Set(["band","criteria","email"].flatMap(s=>S[s].by_month.map(m=>m.month)))].sort();
+  const at=(s,m)=>{const x=S[s].by_month.find(y=>y.month===m);return x?pct(x.rate)+" (n="+x.n+")":"—";};
+  v.append(el("section",{class:"card"},el("h2",{},"Disagreement over time"),
+    el("p",{class:"lede"},"Three separate signals, never blended. Each should fall as the system aligns with Riya, then plateau; it rarely reaches zero."),
+    months.length?tableEl(["Month","Band vs decision","Criteria corrected","Email changed"],months.map(m=>el("tr",{},el("td",{},m),el("td",{class:"n"},at("band",m)),el("td",{class:"n"},at("criteria",m)),el("td",{class:"n"},at("email",m))))):
+      el("div",{class:"empty"},"No months with feedback yet."),
+    el("div",{class:"chips",style:"margin-top:10px"},...["band","criteria","email"].map(s=>{const p=S[s].plateau;return el("span",{class:"chip "+(p&&p.plateaued?"warn":"")},s+": "+(p?(p.plateaued?"plateaued at "+pct(p.level):"still moving"):"not enough months to judge a plateau"));}))));
+  const sec=[...new Set(["band","criteria","email"].flatMap(s=>S[s].by_sector.map(m=>m.sector)))].sort();
+  const bs=(s,x)=>{const y=S[s].by_sector.find(z=>z.sector===x);return y?pct(y.rate):"—";};
+  v.append(el("div",{class:"grid2",style:"margin-bottom:16px"},
+    el("section",{class:"card"},el("h2",{},"By sector"),el("p",{class:"lede"},"New sectors spike: with no past feedback the system has nothing to match against."),
+      sec.length?tableEl(["Sector","Band","Criteria","Email"],sec.map(x=>el("tr",{},el("td",{},x),el("td",{class:"n"},bs("band",x)),el("td",{class:"n"},bs("criteria",x)),el("td",{class:"n"},bs("email",x))))):el("p",{class:"small muted"},"No sector has feedback yet."),
+      el("h3",{},"No usable feedback yet (expect higher disagreement)"),el("div",{class:"chips"},...S.cold_sectors.map(c=>el("span",{class:"chip warn"},c.sector+" · "+c.applications+" app"+(c.applications>1?"s":""))))),
+    el("section",{class:"card"},el("h2",{},"How feedback is guarded"),el("p",{class:"lede"},"Answers to the limits of a feedback loop."),
+      el("ul",{class:"clean"},
+        el("li",{},el("b",{},"The why: "),"every correction and every email edit needs a one-line reason, stored with it."),
+        el("li",{},el("b",{},"One edit, one reason: "),"each email edit is its own row, so an exception is never bundled with other changes."),
+        el("li",{},el("b",{},"Exceptions stay exceptions: "),"an edit marked 'this case only' (e.g. a referral mention) is logged but never reused."),
+        el("li",{},el("b",{},"Bad days: "),"a named person can flag feedback as a bad day or retract it; it is then excluded everywhere."),
+        el("li",{},el("b",{},"Agreement before learning: "),"a lesson reaches the scoring prompt only when "+L.inject_rule+"+ other companies in the same sector agree, with every reason attached."),
+        el("li",{},el("b",{},"The 80/20 limit: "),"the base prompt stays fixed; each run reports how much of the prompt the lessons took.")))));
+  const withL=Object.entries(L.lessons).filter(([c,ls])=>ls.length);
+  v.append(el("section",{class:"card"},el("h2",{},"What the scoring prompt would be taught"),el("p",{class:"lede"},"Lessons injected for each company at its next scoring run (rule: "+L.inject_rule+"+ agreeing companies, same sector, general scope, not flagged)."),
+    withL.length?tableEl(["Company","Criterion","Direction","Agreed by","Reasons"],withL.flatMap(([c,ls])=>ls.map(l=>el("tr",{},el("td",{},c),el("td",{},l.criterion),el("td",{},l.direction),el("td",{class:"small"},l.companies.join(", ")),el("td",{class:"small"},...l.reasons.map(r=>el("div",{},r))))))):
+      el("div",{class:"empty"},"No lesson qualifies yet, so the scoring prompt is unchanged.")));
+  v.append(el("section",{class:"card"},el("h2",{},"Fine-tuning readiness"),
+    el("p",{class:"lede"},"The bar is a PROPOSAL for Kushal to set. Fine-tuning is considered only when every check is met and a person has confirmed the easy fixes were tried."),
+    el("div",{style:"margin-bottom:12px"},el("span",{class:"chip "+(R.ready?"ok":"warn"),style:"font-size:13px;padding:3px 12px"},R.verdict)),
+    tableEl(["Check","Met","Now"],R.checks.map(c=>el("tr",{},el("td",{},c.check),el("td",{class:c.met?"st-clear":"st-flag"},c.met?"✓ yes":"✗ no"),el("td",{class:"small"},c.value)))),
+    el("h3",{},"Confirmed by a person first"),el("ul",{class:"clean"},...R.manual_checks.map(x=>el("li",{},"☐ "+x))),
+    el("h3",{},"Route"),el("p",{class:"small"},"Self-managed (Unsloth / Colab) on a small open model (Gemma, Qwen or Llama, 2–8B), so founder data stays in-house. Dataset: same prompts as the live app, deduplicated, no sector above the cap, split 75/15/10; the test split is held out until the final evaluation. Serving needs its own GPU endpoint (not Vercel)."),
+    el("div",{class:"past"},R.note)));
+  if(L.flags.length)v.append(el("section",{class:"card"},el("h2",{},"Flagged feedback"),table([["target","Target"],["target_id","Id","n"],["kind","Kind"],["reason","Reason","small"],["flagged_by","By"],["flagged_at","At","small"]],L.flags)));
+  return v;}
+
 function render(){nav();hideTip();const view=document.getElementById("view");view.replaceChildren();
   if(current===null)view.append(overview());else if(current==="__backtest")view.append(backtestView());
-  else if(current==="__trust")view.append(trustView());else if(current==="__gaps")view.append(gapsView());else if(current==="__time")view.append(timeView());else if(current==="__cost")view.append(costView());
+  else if(current==="__trust")view.append(trustView());else if(current==="__gaps")view.append(gapsView());else if(current==="__time")view.append(timeView());else if(current==="__cost")view.append(costView());else if(current==="__learning")view.append(learningView());
   else{const c=D.companies.find(x=>x.company===current);if(c)view.append(companyView(c));else{current=null;view.append(overview());}}}
 routeFromHash();render();
 </script></body></html>

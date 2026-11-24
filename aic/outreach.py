@@ -10,6 +10,7 @@ Gates (each enforced in code AND, where it matters, in the DB):
     a recipient, or email content. 'no'/'unclear' needs a named human before any action (DB trigger).
 
   python -m aic.outreach status
+  python -m aic.outreach edit <outbox_id> <file with new body> "<why, one line>" <your name> [--this-case]
   python -m aic.outreach approve-email <outbox_id> <your name>
   python -m aic.outreach approve-hold <hold_id> <your name>
   python -m aic.outreach allow <placeholder address> <your name>
@@ -169,6 +170,41 @@ def draft_pass_note(conn, company: str, to_addr: str, founder_first: str, partne
 
 
 # ---- approvals and dry-run sending ----------------------------------------------------
+def edit_draft(conn, outbox_id: int, body: str, by: str, reason: str, scope: str = "general",
+               subject: Optional[str] = None) -> int:
+    """Riya edits a draft before approving it (lecture 24 Nov: the signal is what she changes).
+
+    Each edit is its own row in email_edits with its own one-line reason and scope, so one exception is never
+    bundled with other edits or turned into a general rule. The system's draft survives as the first edit's
+    'before'. Only drafts can change (DB trigger), and 'this_case' edits are never reused.
+    """
+    from difflib import SequenceMatcher
+    from .feedback import company_sector
+    row = conn.execute("SELECT company, subject, body, status FROM outbox WHERE id=?", (outbox_id,)).fetchone()
+    if not row:
+        raise OutreachError(f"no outbox row {outbox_id}")
+    company, old_subject, old_body, status = row
+    if status != "draft":
+        raise OutreachError("only drafts can be edited")
+    reason = (reason or "").strip()
+    if not reason or "\n" in reason or len(reason) > 200:
+        raise OutreachError("reason must be one line, at most 200 characters")
+    if scope not in ("general", "this_case"):
+        raise OutreachError("scope must be 'general' or 'this_case'")
+    subject = old_subject if subject is None else subject
+    if subject == old_subject and body == old_body:
+        raise OutreachError("nothing changed")
+    ratio = 1 - SequenceMatcher(None, old_subject + "\n" + old_body, subject + "\n" + body).ratio()
+    eid = conn.execute(
+        "INSERT INTO email_edits (outbox_id, company, sector, before_subject, before_body, after_subject, after_body, "
+        "change_ratio, reason, scope, edited_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (outbox_id, company, company_sector(company, config.load()), old_subject, old_body, subject, body,
+         round(ratio, 4), reason, scope, by)).lastrowid
+    conn.execute("UPDATE outbox SET subject=?, body=? WHERE id=?", (subject, body, outbox_id))
+    conn.commit()
+    return eid
+
+
 def approve_email(conn, outbox_id: int, by: str, note: str = "") -> int:
     aid = conn.execute("INSERT INTO approvals (action_type, target_id, approved_by, note) VALUES ('send_email', ?, ?, ?)",
                        (outbox_id, by, note)).lastrowid
@@ -437,6 +473,9 @@ if __name__ == "__main__":
             print("hold", r)
         for r in conn.execute("SELECT company, model_band, human_decision FROM outcomes ORDER BY company"):
             print("outcome", r)
+    elif a[:1] == ["edit"] and len(a) in (5, 6):
+        print("edit", edit_draft(conn, int(a[1]), Path(a[2]).read_text(), a[4], a[3],
+                                 scope="this_case" if "--this-case" in a else "general"))
     elif a[:1] == ["approve-email"] and len(a) == 3:
         print("approval", approve_email(conn, int(a[1]), a[2]))
     elif a[:1] == ["approve-hold"] and len(a) == 3:

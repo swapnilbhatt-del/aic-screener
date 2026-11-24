@@ -11,7 +11,7 @@ from typing import Optional
 from datetime import datetime
 from pathlib import Path
 
-from . import assurance, config, costs, db
+from . import assurance, config, costs, db, learning
 from .ingest import COMPANIES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -132,8 +132,8 @@ def collect() -> dict:
     return {"generated": datetime.now().strftime("%Y-%m-%d %H:%M"), "config_version": cfg.get("version"),
             "thresholds": cfg["thresholds"], "groups": {g: sum(cfg["criteria"][k]["weight"] for k in ks)
                                                          for g, ks in cfg["groups"].items()},
-            "companies": companies, "blinded": sorted(blinded), "backtest": backtest, "assurance": assurance.build(), "ai_cost": costs.build(),
-            "reports": sorted(p.name for p in (ROOT / "reports").glob("stage*.md")) + ["trust_and_limits.md", "requirements_audit.md", "production_readiness.md"]}
+            "companies": companies, "blinded": sorted(blinded), "backtest": backtest, "assurance": assurance.build(), "ai_cost": costs.build(), "learning": learning.build(),
+            "reports": sorted(p.name for p in (ROOT / "reports").glob("stage*.md")) + ["trust_and_limits.md", "requirements_audit.md", "production_readiness.md", "feedback_and_finetuning.md"]}
 
 
 PUBLISH_HEAD = """<title>AIC Screener</title>

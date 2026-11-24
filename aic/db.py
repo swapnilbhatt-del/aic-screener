@@ -280,6 +280,54 @@ BEGIN SELECT RAISE(ABORT, 'proposal decisions need a named human'); END;
 """
 
 
+FEEDBACK_SCHEMA = """
+-- Feedback loop (lecture 24 Nov). Riya's email edits: one row per edit, never overwritten, so the system's
+-- draft and what she approved are both kept. One edit = one reason = one scope (no bundling of exceptions).
+CREATE TABLE IF NOT EXISTS email_edits (
+    id            INTEGER PRIMARY KEY,
+    outbox_id     INTEGER NOT NULL REFERENCES outbox(id),
+    company       TEXT NOT NULL,
+    sector        TEXT,
+    before_subject TEXT NOT NULL,
+    before_body   TEXT NOT NULL,
+    after_subject TEXT NOT NULL,
+    after_body    TEXT NOT NULL,
+    change_ratio  REAL NOT NULL CHECK (change_ratio BETWEEN 0 AND 1),
+    reason        TEXT NOT NULL CHECK (length(trim(reason)) > 0 AND instr(reason, char(10)) = 0),
+    scope         TEXT NOT NULL CHECK (scope IN ('general', 'this_case')),
+    edited_by     TEXT NOT NULL,
+    edited_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TRIGGER IF NOT EXISTS email_edits_human_only
+BEFORE INSERT ON email_edits
+WHEN length(trim(NEW.edited_by)) = 0 OR lower(trim(NEW.edited_by)) IN ('model', 'system', 'auto', 'claude')
+BEGIN SELECT RAISE(ABORT, 'email edit blocked: needs a named human'); END;
+CREATE TRIGGER IF NOT EXISTS email_edits_no_update BEFORE UPDATE ON email_edits
+BEGIN SELECT RAISE(ABORT, 'email edits are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS email_edits_no_delete BEFORE DELETE ON email_edits
+BEGIN SELECT RAISE(ABORT, 'email edits are append-only'); END;
+
+-- A named human can flag a piece of feedback as a bad-day edit or retract it; flagged feedback is never reused.
+CREATE TABLE IF NOT EXISTS feedback_flags (
+    id         INTEGER PRIMARY KEY,
+    target     TEXT NOT NULL CHECK (target IN ('correction', 'email_edit')),
+    target_id  INTEGER NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('bad_day', 'retracted')),
+    reason     TEXT NOT NULL CHECK (length(trim(reason)) > 0 AND instr(reason, char(10)) = 0),
+    flagged_by TEXT NOT NULL,
+    flagged_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TRIGGER IF NOT EXISTS feedback_flags_human_only
+BEFORE INSERT ON feedback_flags
+WHEN length(trim(NEW.flagged_by)) = 0 OR lower(trim(NEW.flagged_by)) IN ('model', 'system', 'auto', 'claude')
+BEGIN SELECT RAISE(ABORT, 'flag blocked: needs a named human'); END;
+CREATE TRIGGER IF NOT EXISTS feedback_flags_no_update BEFORE UPDATE ON feedback_flags
+BEGIN SELECT RAISE(ABORT, 'flags are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS feedback_flags_no_delete BEFORE DELETE ON feedback_flags
+BEGIN SELECT RAISE(ABORT, 'flags are append-only'); END;
+"""
+
+
 AI_SCHEMA = """
 -- Every model call, metered (lecture 19 Nov: know where every rupee goes before production). Append-only.
 CREATE TABLE IF NOT EXISTS ai_calls (
@@ -346,7 +394,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
                            "SELECT id, company, root_outbox_id, status, followups_sent, created_at FROM threads;"
                            "DROP TABLE threads; ALTER TABLE threads_new RENAME TO threads;")
         conn.execute("PRAGMA foreign_keys = ON")
-    for table, col, ddl in (("replies", "requested_slot", "TEXT"), ("calendar_holds", "attendees", "TEXT")):
+    for table, col, ddl in (("replies", "requested_slot", "TEXT"), ("calendar_holds", "attendees", "TEXT"),
+                            ("corrections", "scope", "TEXT NOT NULL DEFAULT 'general' CHECK (scope IN ('general', 'this_case'))")):
         if col not in [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
     conn.commit()
@@ -359,6 +408,6 @@ def connect(path: Optional[Union[str, Path]] = None) -> sqlite3.Connection:
         Path(target).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(target)
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.executescript(SCHEMA.replace("__THREADS__", THREADS_DDL.format(name="threads")) + AI_SCHEMA)
+    conn.executescript(SCHEMA.replace("__THREADS__", THREADS_DDL.format(name="threads")) + AI_SCHEMA + FEEDBACK_SCHEMA)
     _migrate(conn)
     return conn

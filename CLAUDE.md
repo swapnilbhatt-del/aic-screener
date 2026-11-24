@@ -60,3 +60,10 @@ Run tests: `.venv/bin/python -m pytest -q`
 Every model call goes through `aic/llm.py`, which writes it to the append-only `ai_calls` ledger in ₹ and applies the cache, the daily alert (₹1,000) and the stop (₹10,000). Only a named human can release a stop. Never call a model API outside this client. `aic/runner.py` runs extraction, research and scoring as API calls. Riya's ₹1,000/h and USD/INR 88 are placeholders. Follow-ups: max 3, then a partner closes the thread (never auto-rejected). Calls stay on Tue/Thu. Kushal joins first calls for deeptech only. See `reports/production_readiness.md`.
 
 User, 2026-11-21: Gemini support added (`gemini-*` models). User, 2026-11-24: `ai.models` = `gemini-3.5-flash-lite` (free key; it could not finish a batch: search refused, intermittent 503s). `gemini-*` goes to the Gemini REST API with `GEMINI_API_KEY`; research uses Google Search grounding, and the sources it returned are kept in the output's `grounding` field. Portkey and Langfuse keys can only come from accounts the user creates.
+
+## Feedback loop and fine-tuning (user, 2026-11-24)
+
+- **Disagreement:** three separate signals, never blended (`aic/learning.py`): band vs partner decision, criteria corrected, and how much Riya changed an email draft.
+- **Recording feedback:** every correction and email edit needs a one-line reason and a scope (`general` or `this_case`). `this_case` and flagged (`bad_day`/`retracted`) feedback is never reused. Email edits are their own append-only rows (`outreach.edit_draft`).
+- **What reaches the scoring prompt:** only lessons that 2+ other companies in the same sector agree on (same criterion, same direction), with their reasons (`feedback.lessons`, `runner.build_request(..., conn)`).
+- **Fine-tuning:** a readiness check against a PROPOSED bar for Kushal (`finetune.bar`), plus a dataset export to `data/finetune/` (gitignored). Nothing trains automatically. See `reports/feedback_and_finetuning.md`.
