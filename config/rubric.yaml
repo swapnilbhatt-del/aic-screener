@@ -114,6 +114,22 @@ finetune:
   split: {train: 0.75, val: 0.15, test: 0.10}     # lecture 24 Nov
   max_sector_share: 0.40         # PROPOSED: no sector above 40% of the dataset (lecture: don't over-index on one industry)
   route: self-managed            # lecture: Unsloth/Colab; founder data stays in-house. Base: a 2-8B Gemma, Qwen or Llama
+  # Per-criterion pairs (user 2026-11-24): one criterion per example, so it fits a small GPU. Each criterion sees a
+  # FIXED slice of the inputs (written here, not chosen by a model). Claim metrics match by prefix ("founder_" covers
+  # founder_name, founder_role...); "*" means every claim. All checks go to every criterion (they are short).
+  criterion_inputs:
+    F1: {claims: [founder_, team_size, time_commitment], research: [founder], form: [founders]}
+    F2: {claims: [founder_, key_risk, dependency, regulatory_dependency, product_claim], research: [founder, company], form: [founders]}
+    F3: {claims: ["*"], research: []}
+    F4: {claims: [founder_, team_size, use_of_funds_pct, key_risk], research: [founder], form: [founders]}
+    T1: {claims: [customers_, mrr_inr, arr_inr, revenue_cumulative_inr, time_series, seats_paid, units_live, pilot_to_paid_pct, arpu_month_inr, evidence_of_value], research: [company]}
+    T2: {claims: [cac_inr, channel_mix_pct, gross_margin_pct, payback_months, customers_, arpu_month_inr, price_inr, time_series], research: []}
+    T3: {claims: [milestone_target, use_of_funds_pct, price_inr, mrr_inr, arr_inr, time_series, regulatory_dependency], research: [regulatory]}
+    M1: {claims: [market_, price_inr, arpu_month_inr, customers_], research: [market]}
+    M2: {claims: [competitor_named, competition_claim, market_share_claim, product_claim], research: [competitor]}
+    M3: {claims: [sector, stage, product_claim, regulatory_dependency], research: [market, regulatory, thesis], fund: [thesis], form: [fields]}
+    S1: {claims: [raise_inr, valuation_post_inr, existing_investment_inr, other_investors, use_of_funds_pct, stage, incorporated], research: [], form: [fields]}
+    S2: {claims: ["*"], research: [company, founder]}
 
 oos_test:
   # PROPOSED bar for trusting the band (Trust & limits page); Kushal to agree or change.

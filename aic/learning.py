@@ -16,7 +16,7 @@ split 75/15/10 by a stable hash. Written to data/finetune/ (gitignored, founder 
 
   python -m aic.learning disagreement
   python -m aic.learning readiness
-  python -m aic.learning export
+  python -m aic.learning export [--per-criterion]   (per-criterion: one criterion per pair; fits a free T4 GPU)
 """
 import hashlib
 import json
@@ -175,7 +175,7 @@ def _latest_corrections(conn) -> Dict[str, Dict[str, dict]]:
     return out
 
 
-def build_pairs(conn, cfg) -> List[dict]:
+def build_pairs(conn, cfg, per_criterion: bool = False) -> List[dict]:
     """Input/output pairs in chat format, from the live prompts.
 
     scoring: input = the live scoring request (runner.build_request); output = the score card with each usable
@@ -197,6 +197,22 @@ def build_pairs(conn, cfg) -> List[dict]:
         except runner.RunError:
             continue
         sc = json.loads(sc_path.read_text())
+        if per_criterion:
+            for k, c in sc["criteria"].items():
+                fix = corr.get(co, {}).get(k)
+                req = runner.build_criterion_request(co, k, cfg)
+                ans = {"criterion": k, "score": fix["human_score"] if fix else c["final"], "unknown": c["unknown"],
+                       "confidence": c.get("confidence"),
+                       "rationale": c["rationale"] + (f" [Corrected by {fix['corrected_by']}: {fix['reason']}]" if fix else ""),
+                       "evidence": [{"ref": e.get("ref"), "point": e.get("point")} for e in c.get("evidence", [])]}
+                if k == "T2" and c.get("subparts"):
+                    ans["subparts"] = {n: {"present": bool(x.get("present"))} for n, x in c["subparts"].items()}
+                if k == "M3":
+                    ans.update({"public_line_fit": c.get("public_line_fit"), "observed_pattern_fit": c.get("observed_pattern_fit")})
+                pairs.append({"task": "scoring", "company": co, "sector": feedback.company_sector(co, cfg),
+                              "messages": [{"role": "system", "content": req["system"]}, req["messages"][0],
+                                           {"role": "assistant", "content": json.dumps(ans, ensure_ascii=False)}]})
+            continue
         target = {}
         for k, c in sc["criteria"].items():
             fix = corr.get(co, {}).get(k)
@@ -225,11 +241,12 @@ def _h(s: str) -> str:
     return hashlib.sha256(s.encode()).hexdigest()
 
 
-def export(conn=None, cfg: Optional[dict] = None, out: Path = OUT) -> dict:
+def export(conn=None, cfg: Optional[dict] = None, out: Optional[Path] = None, per_criterion: bool = False) -> dict:
     cfg = cfg or config.load()
     conn = conn or db.connect()
+    out = out or (OUT / "per_criterion" if per_criterion else OUT)
     pairs, seen, dups = [], set(), 0
-    for p in build_pairs(conn, cfg):
+    for p in build_pairs(conn, cfg, per_criterion=per_criterion):
         key = _h(json.dumps(p["messages"][:2], sort_keys=True))
         if key in seen:
             dups += 1
@@ -261,6 +278,8 @@ def export(conn=None, cfg: Optional[dict] = None, out: Path = OUT) -> dict:
     manifest = {"pairs": len(kept), "duplicates_removed": dups, "dropped_for_sector_cap": dropped,
                 "split": {k: len(v) for k, v in parts.items()}, "by_task": dict(Counter(p["task"] for p in kept)),
                 "bar": cfg["finetune"]["bar"], "bar_is_proposal": True,
+                "granularity": "per_criterion" if per_criterion else "full_card",
+                "suggested_max_seq_length": 8192 if per_criterion else 49152,
                 "by_sector": dict(Counter(p["sector"] for p in kept)), "max_sector_share": cap,
                 "format": "chat messages (system, user, assistant); same prompts as the live app",
                 "note": "Founder data: keep in-house (self-managed route). Hold out test.jsonl until the final evaluation."}
@@ -286,6 +305,6 @@ if __name__ == "__main__":
     elif a[:1] == ["readiness"]:
         print(json.dumps(readiness(), indent=1))
     elif a[:1] == ["export"]:
-        print(json.dumps(export(), indent=1))
+        print(json.dumps(export(per_criterion="--per-criterion" in a), indent=1))
     else:
         print(__doc__)

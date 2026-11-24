@@ -71,10 +71,16 @@ To open it in Colab: File → Upload notebook (or open it from GitHub), then cho
 
 Not run on a GPU here. Tests check that every cell is valid Python, that the smoke data loads, and that the notebook recognises the export's format. The scoring and verdict logic was also run locally with a fake model.
 
-**Known limit: scoring pairs are long.** A scoring prompt carries the full claims, checks and research: about 98k–139k characters, roughly 30–40k tokens. That won't fit a free T4 at `MAX_SEQ_LENGTH = 4096`, so those pairs are dropped and reported. Two ways round it:
-- run on a bigger GPU with a longer limit;
-- export shorter pairs, one criterion each, with only its evidence.
+**Long scoring prompts, and the per-criterion export (user, 2026-11-24).** A full scoring prompt carries every claim, check and research finding: about 30–40k tokens, too long for a free T4. `python -m aic.learning export --per-criterion` writes one example per criterion to `data/finetune/per_criterion/`.
 
-Email pairs fit.
+- **What each example sees:** only the inputs that criterion needs, from a fixed map in `config/rubric.yaml → finetune.criterion_inputs` (written down, not chosen by a model).
+  - T1 sees customer and revenue claims plus company research.
+  - M2 sees competitor claims plus competitor research.
+  - F3 (candour) and S2 (evidence integrity) see every claim.
+  - Every criterion sees all the checks.
+- **Prompt:** built from the live scoring prompt: its intro, the anchors, that criterion's row and notes, and the evidence-reference rules.
+- **Size:** the longest example is about 23k characters (~7k tokens). The manifest suggests `MAX_SEQ_LENGTH` 8,192, and the notebook then uses batch 1 × 8 accumulation steps.
+- **Labels:** the partner-corrected score, with the correction's reason.
+- **Trade-off:** a model tuned this way scores one criterion at a time, unlike the live app's single call for the whole card. Serving it means 12 calls per company through `runner.build_criterion_request`, the same builder the export uses, so training and serving prompts match. The full-card export remains for a large GPU.
 
 **Privacy:** Colab runs on Google's machines. For founder data that has to stay in-house, run the same notebook on the fund's own GPU.

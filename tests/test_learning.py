@@ -205,3 +205,54 @@ def test_notebook_task_detection_matches_the_export(conn):
     pair = [p for p in learning.build_pairs(conn, config.load()) if p["task"] == "email"][0]
     assert "Rewrite this All In Capital outreach draft" in "".join(_cells()[2])
     assert pair["messages"][0]["content"].startswith("Rewrite this All In Capital outreach draft")
+
+
+# ---- per-criterion pairs ----------------------------------------------------------------------------------
+@needs_data
+def test_criterion_request_takes_only_its_mapped_inputs_and_fits():
+    cfg = config.load()
+    t1 = json.loads(runner.build_criterion_request("Pumpwise", "T1", cfg)["messages"][0]["content"])
+    assert t1["claims"] and all(c["metric"].startswith("customers_") or c["metric"] in cfg["finetune"]["criterion_inputs"]["T1"]["claims"]
+                                for c in t1["claims"])
+    assert "fund_research" not in t1 and "form_founders" not in t1
+    f3 = json.loads(runner.build_criterion_request("Pumpwise", "F3", cfg)["messages"][0]["content"])
+    assert len(f3["claims"]) > len(t1["claims"])                    # F3 (candour) reads every claim
+    sysmsg = runner.build_criterion_request("Pumpwise", "M3", cfg)["system"]
+    assert sysmsg.startswith(runner.CRITERION_MARK) and "| M3 |" in sysmsg and "| T1 |" not in sysmsg
+    for co in runner.companies():                                   # ~3.3 chars/token: fits 8192 with the answer
+        for k in cfg["criteria"]:
+            r = runner.build_criterion_request(co, k, cfg)
+            assert len(r["system"]) + len(r["messages"][0]["content"]) < 25_000, (co, k)
+
+
+@needs_data
+def test_per_criterion_export_applies_the_correction_to_its_criterion(conn, tmp_path):
+    correct(conn, "Settlr", "T1")
+    cfg = copy.deepcopy(config.load())
+    m = learning.export(conn, cfg, out=tmp_path, per_criterion=True)
+    rows = [json.loads(l) for f in ("train", "val", "test") for l in (tmp_path / f"{f}.jsonl").read_text().splitlines()]
+    assert m["pairs"] == 12 and m["granularity"] == "per_criterion" and len(rows) == 12
+    t1 = [r for r in rows if json.loads(r["messages"][2]["content"])["criterion"] == "T1"][0]
+    ans = json.loads(t1["messages"][2]["content"])
+    human = conn.execute("SELECT human_score FROM corrections").fetchone()[0]
+    assert ans["score"] == human and "Corrected by Riya" in ans["rationale"]
+
+
+def test_notebook_evaluation_scores_both_formats_with_a_fake_model(tmp_path):
+    import types
+    c = _cells()
+    ns = {"model": None}
+    exec(_python(c[1]).replace("SMOKE_TEST = False", "SMOKE_TEST = True").replace('"/content/finetune"', repr(str(tmp_path))), ns)
+    exec(_python(c[2]), ns)
+    ns["FastLanguageModel"] = types.SimpleNamespace(for_inference=lambda m: None)
+    exec(_python(c[4]).replace('baseline = evaluate(test, "baseline (untuned)") if test else None', ""), ns)
+    rows = ns["test"]
+    assert {("criteria" in json.loads(r["messages"][2]["content"])) for r in rows} == {True, False}   # both formats present
+    ns["generate"] = lambda m, n: next("ok " + r["messages"][2]["content"] for r in rows if r["messages"][:2] == m)
+    good = ns["evaluate"](rows, "perfect")
+    ns["generate"] = lambda m, n: "not json"
+    bad = ns["evaluate"](rows, "broken")
+    assert good["scoring"]["disagreement"] == 0 and bad["scoring"]["disagreement"] == 1 and bad["scoring"]["valid_json"] == 0
+    ns["SMOKE_TEST"] = False
+    exec(_python(c[7]).split("summary =")[0].replace('tuned = evaluate(test, "fine-tuned") if test else None', ""), ns)
+    assert "clears the bar" in ns["verdict"](bad, good) and "do not deploy" in ns["verdict"](good, bad)

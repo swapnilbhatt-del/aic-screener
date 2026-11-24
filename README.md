@@ -31,6 +31,6 @@ contain founder data and are gitignored. Run reports: `reports/stage0.md` to `re
 
 API keys: copy `.env.example` to `.env` (gitignored). Cost, ROI and Portkey/Langfuse setup: `reports/production_readiness.md`.
 
-Feedback loop and fine-tuning readiness: `python -m aic.learning disagreement|readiness|export`; record an email edit with `python -m aic.outreach edit`, flag bad-day feedback with `python -m aic.feedback flag`; train with `notebooks/unsloth_finetune.ipynb` in Colab (see `reports/feedback_and_finetuning.md`).
+Feedback loop and fine-tuning readiness: `python -m aic.learning disagreement|readiness|export [--per-criterion]`; record an email edit with `python -m aic.outreach edit`, flag bad-day feedback with `python -m aic.feedback flag`; train with `notebooks/unsloth_finetune.ipynb` in Colab (see `reports/feedback_and_finetuning.md`).
 
 Public deployment: `python -m aic.dashboard --site`, copy `site/` to a folder named `aic-screener`, then `vercel deploy --prod --yes` there (live at https://aic-screener.vercel.app). Requirements audit: `reports/requirements_audit.md`.
