@@ -100,7 +100,8 @@ def _readiness(metered: dict) -> list:
          "detail": "Approvals, human-only decisions and append-only ledgers enforced by DB triggers; founder replies "
                    "are inert data; dry-run only; spend kill switch."},
         {"step": "Real-world load (Portkey, stress test)", "status": "ready" if env("PORTKEY_API_KEY") else "needs your account",
-         "detail": "Model calls route through Portkey when PORTKEY_API_KEY is set (.env). Stress test after that: "
+         "detail": "Claude calls, and Gemini calls except research (which needs Google Search grounding), route through "
+                   "Portkey when PORTKEY_API_KEY is set (.env). Check with `python -m aic.llm check`. Stress test after that: "
                    "a batch of 10 through `python -m aic.runner`, watching latency, errors and spend."},
         {"step": "Can you operate it (Langfuse, RCA)", "status": "ready" if env("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY") else "needs your account",
          "detail": "Each call sends a trace + generation to Langfuse when its keys are set; ai_calls.trace_id links "

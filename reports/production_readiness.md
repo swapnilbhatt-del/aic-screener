@@ -92,3 +92,11 @@ Third attempt, 2026-11-24 (you asked to use the Gemini key). I tested what trigg
 - **A one-line call, three times:** two OK, one 503.
 
 The 503s are capacity on Google's free tier, not anything in our requests. Larger calls fail more often, and it doesn't clear with retries over 7.5 minutes. No new stage completed.
+
+## Update 2026-11-24: Gemini through Portkey
+
+- **Gemini calls now go through Portkey once `PORTKEY_API_KEY` is set.** They use Portkey's OpenAI-compatible `/v1/chat/completions` with `x-portkey-provider: google`, authenticated with your Gemini key, or a Portkey virtual key if you set one. Research still goes direct, because Portkey's OpenAI route doesn't carry Google Search grounding. The ledger's `gateway` column records which route each call took.
+- **Langfuse traces every call**, on any route, once its two keys are set.
+- **`python -m aic.llm check`** sends one tiny metered call and prints the route and the Langfuse trace id.
+- **Not verified yet:** this is tested against fake clients only. No Portkey or Langfuse key exists yet; both need accounts you create.
+- **No thinking setting via Portkey:** Gemini calls through Portkey don't send the thinking level (`effort`), because the documented way to pass it was unclear. Direct calls still send it.

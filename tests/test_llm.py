@@ -265,3 +265,69 @@ def test_gemini_passes_the_kill_switch(conn, cfg):
     with pytest.raises(llm.SpendStopped):
         ask(conn, cfg, fg, model=GEM)
     assert fg.bodies == []
+
+
+# ---- Gemini through Portkey, and Langfuse traces ------------------------------------------------------------
+class FakePortkey:
+    gateway_name = "portkey"
+
+    def __init__(self, finish="stop"):
+        self.bodies, self.finish = [], finish
+
+    def chat(self, body):
+        self.bodies.append(body)
+        return {"id": "pk_1", "choices": [{"message": {"role": "assistant", "content": '{"ok": true}'}, "finish_reason": self.finish}],
+                "usage": {"prompt_tokens": 9_000, "completion_tokens": 700, "prompt_tokens_details": {"cached_tokens": 1_000}}}
+
+
+def test_gemini_routes_through_portkey_except_search(monkeypatch):
+    monkeypatch.delenv("PORTKEY_API_KEY", raising=False)
+    assert not llm.gemini_via_portkey(None)
+    monkeypatch.setenv("PORTKEY_API_KEY", "pk-test")
+    assert llm.gemini_via_portkey(None) and not llm.gemini_via_portkey(runner.WEB_TOOLS)   # research stays direct
+
+
+def test_portkey_call_is_metered_and_logged_as_portkey(conn, cfg):
+    fp = FakePortkey()
+    r = ask(conn, cfg, fp, model=GEM)
+    assert r["text"] == '{"ok": true}' and r["stop_reason"] == "end_turn"
+    assert r["usage"]["input_tokens"] == 8_000 and r["usage"]["cache_read_tokens"] == 1_000 and r["usage"]["output_tokens"] == 700
+    body = fp.bodies[0]
+    assert body["model"] == GEM and body["messages"][0] == {"role": "system", "content": "sys"} and body["max_tokens"] == 100
+    assert conn.execute("SELECT gateway FROM ai_calls").fetchone()[0] == "portkey"
+    with pytest.raises(llm.ModelError, match="refused"):
+        ask(conn, cfg, FakePortkey(finish="content_filter"), model=GEM, content="2")
+
+
+def test_portkey_client_headers(monkeypatch):
+    monkeypatch.setenv("PORTKEY_API_KEY", "pk-test")
+    monkeypatch.delenv("PORTKEY_VIRTUAL_KEY", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    h = llm.PortkeyGeminiClient().headers
+    assert h["x-portkey-api-key"] == "pk-test" and h["x-portkey-provider"] == "google" and h["Authorization"] == "Bearer g-test"
+    monkeypatch.setenv("PORTKEY_VIRTUAL_KEY", "vk-test")
+    h = llm.PortkeyGeminiClient().headers
+    assert h["x-portkey-virtual-key"] == "vk-test" and "Authorization" not in h
+
+
+def test_langfuse_trace_sent_when_keys_set(conn, cfg, monkeypatch):
+    sent = []
+
+    class Resp:
+        def read(self):
+            return b"{}"
+
+    def fake_urlopen(req, timeout=None):
+        sent.append((req.full_url, json.loads(req.data), req.headers))
+        return Resp()
+
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf")
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
+    ask(conn, cfg, FakePortkey(), model=GEM)
+    url, payload, headers = sent[0]
+    assert url.endswith("/api/public/ingestion") and [b["type"] for b in payload["batch"]] == ["trace-create", "generation-create"]
+    gen = payload["batch"][1]["body"]
+    assert gen["model"] == GEM and gen["usageDetails"]["input"] == 8_000 and headers["Authorization"].startswith("Basic ")
+    tid = conn.execute("SELECT trace_id FROM ai_calls ORDER BY id DESC").fetchone()[0]
+    assert tid == payload["batch"][0]["body"]["id"]                 # ledger row links to the Langfuse trace

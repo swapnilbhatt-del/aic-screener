@@ -7,7 +7,8 @@ cap and kill. Every call made by the pipeline goes through `call()`:
      manual stop, or if this call's worst case would cross the stop. A refused call is still logged ('blocked').
   2. cache: an identical request (model, system, messages, tools, effort) is served from `llm_cache` at no cost.
   3. call: by model name. `claude-*` -> Anthropic Messages API (official SDK), via Portkey when PORTKEY_API_KEY
-     is set. `gemini-*` -> Gemini generateContent (REST, GEMINI_API_KEY); research uses Google Search grounding.
+     is set. `gemini-*` -> Gemini: through Portkey (OpenAI-compatible, provider google) when PORTKEY_API_KEY is
+     set, else direct generateContent (GEMINI_API_KEY). Research needs Google Search grounding, so it always goes direct.
   4. meter: tokens and cost (USD and INR, prices from config) appended to `ai_calls` (append-only ledger).
   5. alert: crossing `alert` records an alert event; crossing `stop` engages the kill switch for the day.
   6. trace: a Langfuse trace + generation when LANGFUSE_PUBLIC_KEY/SECRET_KEY are set (never blocks the call).
@@ -17,6 +18,7 @@ Keys come from the environment or a gitignored `.env` (see `.env.example`). Noth
   python -m aic.llm spend                       today's and total spend, per task and model
   python -m aic.llm stop <your name> "<why>"    pull the kill switch now
   python -m aic.llm release <your name> "<why>" release it (a named human only; DB-enforced)
+  python -m aic.llm check                       one tiny metered call: shows the route (portkey/gemini/anthropic) and Langfuse trace id
 """
 import base64
 import hashlib
@@ -156,6 +158,78 @@ def gemini_result(resp: dict) -> dict:
             "usage": usage, "id": resp.get("responseId")}
 
 
+# ---- Gemini through Portkey (OpenAI-compatible gateway) -----------------------------------------------
+PORTKEY_CHAT = "/v1/chat/completions"
+OPENAI_FINISH = {"stop": "end_turn", "length": "max_tokens", "content_filter": "refusal"}
+
+
+def uses_web_tools(tools: Optional[list]) -> bool:
+    return bool(tools) and any(t.get("name") in ("web_search", "web_fetch") for t in tools)
+
+
+def gemini_via_portkey(tools: Optional[list]) -> bool:
+    """Gemini goes through Portkey when a Portkey key is set, except calls that need Google Search grounding
+    (research): Portkey's OpenAI-compatible route does not carry it, so those stay direct."""
+    return bool(os.environ.get("PORTKEY_API_KEY")) and not uses_web_tools(tools)
+
+
+class PortkeyGeminiClient:
+    """Portkey's OpenAI-compatible /v1/chat/completions with provider 'google'.
+    Auth: x-portkey-api-key, plus either a Portkey virtual key or the Gemini key as a bearer token."""
+    gateway_name = "portkey"
+
+    def __init__(self):
+        self.key = os.environ.get("PORTKEY_API_KEY")
+        if not self.key:
+            raise ModelError("PORTKEY_API_KEY is not set (.env)")
+        self.base = os.environ.get("PORTKEY_BASE_URL", "https://api.portkey.ai").rstrip("/")
+        self.headers = {"Content-Type": "application/json", "x-portkey-api-key": self.key, "x-portkey-provider": "google"}
+        if os.environ.get("PORTKEY_VIRTUAL_KEY"):
+            self.headers["x-portkey-virtual-key"] = os.environ["PORTKEY_VIRTUAL_KEY"]
+        elif os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+            self.headers["Authorization"] = "Bearer " + (os.environ.get("GEMINI_API_KEY") or os.environ["GOOGLE_API_KEY"])
+        else:
+            raise ModelError("Portkey needs PORTKEY_VIRTUAL_KEY or GEMINI_API_KEY for Google")
+
+    def chat(self, body: dict, timeout: int = 300, retries: int = 4) -> dict:
+        for attempt in range(retries + 1):
+            req = urllib.request.Request(self.base + PORTKEY_CHAT, data=json.dumps(body).encode(), method="POST",
+                                         headers=self.headers)
+            try:
+                return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+            except urllib.error.HTTPError as e:
+                msg = e.read()[:800]
+                if e.code in (429, 503) and b"limit: 0" not in msg and attempt < retries:
+                    wait = 30 * 2 ** attempt
+                    print(f"Portkey {e.code}, retry {attempt + 1}/{retries} in {wait}s", file=sys.stderr)
+                    time.sleep(wait)
+                    continue
+                raise ModelError(f"Portkey HTTP {e.code}: {msg!r}") from None
+
+
+def openai_body(model: str, system: Any, messages: list, max_tokens: int) -> dict:
+    def text_of(c):
+        if isinstance(c, str):
+            return c
+        return "".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
+    msgs = [{"role": "system", "content": system if isinstance(system, str) else text_of(system)}] if system is not None else []
+    msgs += [{"role": m["role"], "content": text_of(m["content"])} for m in messages]
+    return {"model": model, "messages": msgs, "max_tokens": max_tokens}
+
+
+def openai_result(resp: dict) -> dict:
+    """OpenAI-shaped response -> the same shape call() returns for the other providers."""
+    ch = (resp.get("choices") or [{}])[0]
+    text = (ch.get("message") or {}).get("content") or ""
+    u = resp.get("usage") or {}
+    cached = ((u.get("prompt_tokens_details") or {}).get("cached_tokens")) or 0
+    usage = {"input_tokens": (u.get("prompt_tokens") or 0) - cached, "output_tokens": u.get("completion_tokens") or 0,
+             "cache_read_tokens": cached, "cache_write_tokens": 0, "web_searches": 0}
+    fin = ch.get("finish_reason") or "other"
+    return {"text": text, "content": [{"type": "text", "text": text}], "stop_reason": OPENAI_FINISH.get(fin, fin),
+            "usage": usage, "id": resp.get("id")}
+
+
 # ---- money -----------------------------------------------------------------------------
 def today(cfg: dict, now: Optional[datetime] = None) -> str:
     return (now or datetime.now(ZoneInfo(cfg["ai"]["day_tz"]))).astimezone(ZoneInfo(cfg["ai"]["day_tz"])).date().isoformat()
@@ -278,7 +352,12 @@ def call(conn: sqlite3.Connection, task: str, messages: List[dict], system: Any 
         raise ModelError(f"no price configured for {model}; add it to ai.prices_usd_per_mtok before using it")
     d = today(cfg)
     prov = provider(model)
-    gw = (gateway() if prov == "anthropic" else "gemini") if client is None else getattr(client, "gateway_name", "test")
+    if client is not None:
+        gw = getattr(client, "gateway_name", "test")
+    elif prov == "anthropic":
+        gw = gateway()
+    else:
+        gw = "portkey" if gemini_via_portkey(tools) else "gemini"
 
     ks = kill_state(conn, d)
     spent = spend_inr(conn, d)
@@ -299,7 +378,11 @@ def call(conn: sqlite3.Connection, task: str, messages: List[dict], system: Any 
 
     started = time.time()
     try:
-        if prov == "gemini":
+        if prov == "gemini" and (hasattr(client, "chat") if client is not None else gemini_via_portkey(tools)):
+            client = client or PortkeyGeminiClient()
+            r = openai_result(client.chat(openai_body(model, system, messages, max_tokens)))
+            usage, content, text, stop, req_id = r["usage"], r["content"], r["text"], r["stop_reason"], r["id"]
+        elif prov == "gemini":
             client = client or GeminiClient()
             r = gemini_result(client.generate(model, gemini_body(system, messages, tools, max_tokens, effort)))
             usage, content, text, stop, req_id = r["usage"], r["content"], r["text"], r["stop_reason"], r["id"]
@@ -381,5 +464,13 @@ if __name__ == "__main__":
         manual_stop(conn, a[1], a[2]); print("kill switch engaged")
     elif a[:1] == ["release"] and len(a) == 3:
         release(conn, a[1], a[2]); print("kill switch released")
+    elif a[:1] == ["check"]:
+        r = call(conn, "drafting", [{"role": "user", "content": 'Reply with {"ok": true} only.'}], system="Reply with JSON only.",
+                 max_tokens=256, use_cache=False)
+        row = conn.execute("SELECT gateway, trace_id, model, input_tokens, output_tokens FROM ai_calls WHERE id=?", (r["call_id"],)).fetchone()
+        print(json.dumps({"reply": r["text"][:80], "gateway": row[0], "langfuse_trace_id": row[1], "model": row[2],
+                          "tokens": [row[3], row[4]], "cost_inr": r["cost_inr"],
+                          "portkey_key_set": bool(os.environ.get("PORTKEY_API_KEY")),
+                          "langfuse_keys_set": bool(os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY"))}, indent=1))
     else:
         print(__doc__)
