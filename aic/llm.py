@@ -313,23 +313,37 @@ def _worst_case_usd(model: str, system: Any, messages: list, max_tokens: int, cf
 # ---- tracing (Langfuse, optional) ------------------------------------------------------------
 def _langfuse(task: str, company: Optional[str], model: str, usage: dict, usd: float, started: float, ended: float,
               system: Any, messages: list, output: Any) -> Optional[str]:
+    """One Langfuse generation per call, sent as an OpenTelemetry span (OTLP/HTTP JSON) to
+    /api/public/otel/v1/traces with `x-langfuse-ingestion-version: 4`. (The older /api/public/ingestion
+    batch endpoint now answers 410 Gone on Langfuse Cloud.) Returns the trace id, or None. Never blocks a call."""
     pk, sk = os.environ.get("LANGFUSE_PUBLIC_KEY"), os.environ.get("LANGFUSE_SECRET_KEY")
     if not (pk and sk):
         return None
     host = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com").rstrip("/")
-    tid, ts = str(uuid.uuid4()), lambda t: datetime.fromtimestamp(t, ZoneInfo("UTC")).isoformat()
-    batch = [
-        {"id": str(uuid.uuid4()), "timestamp": ts(started), "type": "trace-create",
-         "body": {"id": tid, "name": f"aic.{task}", "metadata": {"company": company}, "tags": ["aic-screener", task]}},
-        {"id": str(uuid.uuid4()), "timestamp": ts(ended), "type": "generation-create",
-         "body": {"id": str(uuid.uuid4()), "traceId": tid, "name": task, "model": model, "startTime": ts(started),
-                  "endTime": ts(ended), "input": {"system": str(system)[:20000], "messages": json.dumps(messages, default=str)[:50000]},
-                  "output": json.dumps(output, default=str)[:50000],
-                  "usageDetails": {"input": usage.get("input_tokens", 0), "output": usage.get("output_tokens", 0),
-                                   "cache_read_input_tokens": usage.get("cache_read_tokens", 0)},
-                  "costDetails": {"total": usd}}}]
-    req = urllib.request.Request(f"{host}/api/public/ingestion", data=json.dumps({"batch": batch}).encode(), method="POST",
-                                 headers={"Content-Type": "application/json",
+    tid, sid = uuid.uuid4().hex, uuid.uuid4().hex[:16]
+    s = lambda k, v: {"key": k, "value": {"stringValue": str(v)}}
+    i = lambda k, v: {"key": k, "value": {"intValue": int(v)}}
+    attrs = [s("langfuse.observation.type", "generation"), s("langfuse.trace.name", f"aic.{task}"),
+             s("langfuse.observation.model.name", model), s("gen_ai.request.model", model),
+             s("langfuse.observation.input", json.dumps({"system": str(system)[:20000],
+                                                          "messages": json.dumps(messages, default=str)[:50000]})),
+             s("langfuse.observation.output", json.dumps(output, default=str)[:50000]),
+             s("langfuse.observation.usage_details", json.dumps({"input": usage.get("input_tokens", 0),
+                                                                  "output": usage.get("output_tokens", 0),
+                                                                  "cache_read_input_tokens": usage.get("cache_read_tokens", 0)})),
+             s("langfuse.observation.cost_details", json.dumps({"total": usd})),
+             i("gen_ai.usage.input_tokens", usage.get("input_tokens", 0)),
+             i("gen_ai.usage.output_tokens", usage.get("output_tokens", 0)),
+             s("langfuse.trace.metadata.company", company or ""), s("langfuse.observation.metadata.task", task),
+             {"key": "langfuse.trace.tags", "value": {"arrayValue": {"values": [{"stringValue": "aic-screener"},
+                                                                                {"stringValue": task}]}}}]
+    span = {"traceId": tid, "spanId": sid, "name": task, "kind": 3,
+            "startTimeUnixNano": str(int(started * 1e9)), "endTimeUnixNano": str(int(ended * 1e9)),
+            "attributes": attrs, "status": {"code": 1}}
+    body = {"resourceSpans": [{"resource": {"attributes": [s("service.name", "aic-screener")]},
+                               "scopeSpans": [{"scope": {"name": "aic.llm"}, "spans": [span]}]}]}
+    req = urllib.request.Request(f"{host}/api/public/otel/v1/traces", data=json.dumps(body).encode(), method="POST",
+                                 headers={"Content-Type": "application/json", "x-langfuse-ingestion-version": "4",
                                           "Authorization": "Basic " + base64.b64encode(f"{pk}:{sk}".encode()).decode()})
     try:
         urllib.request.urlopen(req, timeout=10).read()

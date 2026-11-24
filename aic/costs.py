@@ -104,7 +104,7 @@ def _readiness(metered: dict) -> list:
                    "Portkey when PORTKEY_API_KEY is set (.env). Check with `python -m aic.llm check`. Stress test after that: "
                    "a batch of 10 through `python -m aic.runner`, watching latency, errors and spend."},
         {"step": "Can you operate it (Langfuse, RCA)", "status": "ready" if env("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY") else "needs your account",
-         "detail": "Each call sends a trace + generation to Langfuse when its keys are set; ai_calls.trace_id links "
+         "detail": "Each call sends a generation to Langfuse (OpenTelemetry endpoint) when its keys are set; verified live 2026-11-24; ai_calls.trace_id links "
                    "the ledger row to the trace for root-cause analysis."},
         {"step": "Do the economics make sense", "status": "measured" if metered["per_application_inr"] is not None else "metering built, not yet measured",
          "detail": "Every call is metered in ₹ with alerts and a kill switch; ROI section uses the metered figure once a "

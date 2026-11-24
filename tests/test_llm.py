@@ -326,8 +326,10 @@ def test_langfuse_trace_sent_when_keys_set(conn, cfg, monkeypatch):
     monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
     ask(conn, cfg, FakePortkey(), model=GEM)
     url, payload, headers = sent[0]
-    assert url.endswith("/api/public/ingestion") and [b["type"] for b in payload["batch"]] == ["trace-create", "generation-create"]
-    gen = payload["batch"][1]["body"]
-    assert gen["model"] == GEM and gen["usageDetails"]["input"] == 8_000 and headers["Authorization"].startswith("Basic ")
+    assert url.endswith("/api/public/otel/v1/traces") and headers["X-langfuse-ingestion-version"] == "4"
+    span = payload["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+    attrs = {a["key"]: list(a["value"].values())[0] for a in span["attributes"]}
+    assert attrs["langfuse.observation.type"] == "generation" and attrs["langfuse.observation.model.name"] == GEM
+    assert json.loads(attrs["langfuse.observation.usage_details"])["input"] == 8_000 and headers["Authorization"].startswith("Basic ")
     tid = conn.execute("SELECT trace_id FROM ai_calls ORDER BY id DESC").fetchone()[0]
-    assert tid == payload["batch"][0]["body"]["id"]                 # ledger row links to the Langfuse trace
+    assert tid == span["traceId"] and len(tid) == 32                  # ledger row links to the Langfuse trace

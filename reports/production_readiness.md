@@ -100,3 +100,10 @@ The 503s are capacity on Google's free tier, not anything in our requests. Large
 - **`python -m aic.llm check`** sends one tiny metered call and prints the route and the Langfuse trace id.
 - **Not verified yet:** this is tested against fake clients only. No Portkey or Langfuse key exists yet; both need accounts you create.
 - **No thinking setting via Portkey:** Gemini calls through Portkey don't send the thinking level (`effort`), because the documented way to pass it was unclear. Direct calls still send it.
+
+## Update 2026-11-24: Langfuse is live
+
+- **Keys:** your Langfuse keys are in `.env` (gitignored). They work on the EU region (`cloud.langfuse.com`, project "My Project").
+- **Endpoint change:** the old `/api/public/ingestion` endpoint now answers **410 Gone**. Tracing now uses the OpenTelemetry endpoint `/api/public/otel/v1/traces` with `x-langfuse-ingestion-version: 4`, one generation span per call.
+- **Verified live:** `python -m aic.llm check` sent one call, and the trace was read back through the v2 Observations API with the right model (`gemini-3.5-flash-lite`), tokens (15 in, 5 out) and cost ($0.000017). That cost matches our ledger. Langfuse's own price for the model also matches our config.
+- **Portkey is still not active.** Its key-creation API (`POST /v1/api-keys/{type}/{sub-type}`) itself needs an existing Portkey API key, so the first key has to come from the Portkey dashboard (API Keys → Create).
