@@ -24,6 +24,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -61,6 +62,12 @@ def load_env(path: Path = ROOT / ".env") -> None:
             os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
+def portkey_config_header(cfg: Optional[dict] = None) -> str:
+    """Portkey gateway config: automatic retries on rate limits and server errors (case Task 3)."""
+    r = (cfg or config.load())["ai"].get("portkey_retry", {"attempts": 3, "on_status_codes": [429, 500, 502, 503, 504]})
+    return json.dumps({"retry": {"attempts": r["attempts"], "on_status_codes": r["on_status_codes"]}})
+
+
 def gateway() -> str:
     return "portkey" if os.environ.get("PORTKEY_API_KEY") else "anthropic"
 
@@ -69,7 +76,8 @@ def make_client():
     """Official Anthropic SDK client; through Portkey when PORTKEY_API_KEY is set."""
     import anthropic
     if os.environ.get("PORTKEY_API_KEY"):
-        headers = {"x-portkey-api-key": os.environ["PORTKEY_API_KEY"], "x-portkey-provider": "anthropic"}
+        headers = {"x-portkey-api-key": os.environ["PORTKEY_API_KEY"], "x-portkey-provider": "anthropic",
+                   "x-portkey-config": portkey_config_header()}
         if os.environ.get("PORTKEY_VIRTUAL_KEY"):
             headers["x-portkey-virtual-key"] = os.environ["PORTKEY_VIRTUAL_KEY"]
         return anthropic.Anthropic(base_url=os.environ.get("PORTKEY_BASE_URL", "https://api.portkey.ai"),
@@ -183,7 +191,8 @@ class PortkeyGeminiClient:
         if not self.key:
             raise ModelError("PORTKEY_API_KEY is not set (.env)")
         self.base = os.environ.get("PORTKEY_BASE_URL", "https://api.portkey.ai").rstrip("/")
-        self.headers = {"Content-Type": "application/json", "x-portkey-api-key": self.key, "x-portkey-provider": "google"}
+        self.headers = {"Content-Type": "application/json", "x-portkey-api-key": self.key, "x-portkey-provider": "google",
+                        "x-portkey-config": portkey_config_header()}
         if os.environ.get("PORTKEY_VIRTUAL_KEY"):
             self.headers["x-portkey-virtual-key"] = os.environ["PORTKEY_VIRTUAL_KEY"]
         elif os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
@@ -230,6 +239,54 @@ def openai_result(resp: dict) -> dict:
             "usage": usage, "id": resp.get("id")}
 
 
+# ---- privacy: nothing personal leaves the machine (case Task 1) -------------------------------------------
+EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+PHONE_RE = re.compile(r"(?<![\d.])(?:\+91[\s-]?|\+\d{1,3}[\s-]|0)?(?:[6-9]\d{4}[\s-]?\d{5}|\d{3}[\s-]\d{3}[\s-]\d{4})(?![\d.])")
+
+
+def _token(kind: str, value: str) -> str:
+    return f"[{kind}:{hashlib.sha1(value.strip().lower().encode()).hexdigest()[:8]}]"
+
+
+def redact(obj: Any) -> (Any, int):
+    """Replace every email address and phone number with a stable ID token, e.g. [email:3f2a9c1b].
+    The same address always gets the same token, so the model can still tell founders apart without seeing them."""
+    n = 0
+
+    def sub(x):
+        nonlocal n
+        if isinstance(x, str) and x[:1] in "{[":
+            try:                       # JSON text (request payloads): scrub the decoded values, never the escaped text,
+                parsed = json.loads(x)  # or a pattern can swallow the 'n' of a \n escape and break the JSON
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, (dict, list)):
+                return json.dumps(sub(parsed), ensure_ascii=False)
+        if isinstance(x, str):
+            def rep(kind):
+                def f(m):
+                    nonlocal n
+                    n += 1
+                    return _token(kind, m.group(0))
+                return f
+            return PHONE_RE.sub(rep("phone"), EMAIL_RE.sub(rep("email"), x))
+        if isinstance(x, list):
+            return [sub(i) for i in x]
+        if isinstance(x, dict):
+            return {k: sub(v) for k, v in x.items()}
+        return x
+    return sub(obj), n
+
+
+def prompt_version(*names: str) -> str:
+    """'score.md@1a2b3c4d': the prompt file(s) a run used, by content hash, so every run says which prompt produced it."""
+    parts = []
+    for n in names:
+        p = ROOT / "prompts" / n
+        parts.append(f"{n}@{hashlib.sha256(p.read_bytes()).hexdigest()[:8]}" if p.exists() else f"{n}@missing")
+    return "+".join(parts)
+
+
 # ---- money -----------------------------------------------------------------------------
 def today(cfg: dict, now: Optional[datetime] = None) -> str:
     return (now or datetime.now(ZoneInfo(cfg["ai"]["day_tz"]))).astimezone(ZoneInfo(cfg["ai"]["day_tz"])).date().isoformat()
@@ -240,6 +297,7 @@ def cost_usd(model: str, usage: Dict[str, int], cfg: dict) -> float:
     return (usage.get("input_tokens", 0) * p["input"] + usage.get("output_tokens", 0) * p["output"]
             + usage.get("cache_read_tokens", 0) * p["cache_read"] + usage.get("cache_write_tokens", 0) * p.get("cache_write", 0)
             ) / 1e6 + usage.get("web_searches", 0) * p.get("web_search_per_1k", cfg["ai"]["web_search_usd_per_1k"]) / 1000
+
 
 
 def spend_inr(conn, day: Optional[str] = None) -> float:
@@ -277,16 +335,16 @@ def release(conn, by: str, note: str, cfg: Optional[dict] = None) -> None:
 
 # ---- ledger ------------------------------------------------------------------------------
 def _log(conn, cfg, *, task, company, model, gw, usage, status, latency_ms=None, request_id=None, trace_id=None,
-         error=None, day=None) -> int:
+         error=None, day=None, prompt_ver=None, pii=0) -> int:
     usd = cost_usd(model, usage, cfg) if status == "ok" else 0.0
     rid = conn.execute(
         "INSERT INTO ai_calls (at, day, task, company, model, gateway, input_tokens, output_tokens, cache_read_tokens, "
-        "cache_write_tokens, web_searches, cost_usd, cost_inr, latency_ms, status, request_id, trace_id, error) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "cache_write_tokens, web_searches, cost_usd, cost_inr, latency_ms, status, request_id, trace_id, error, "
+        "prompt_version, pii_redacted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(timespec="microseconds"), day or today(cfg), task, company,
          model, gw, usage.get("input_tokens", 0), usage.get("output_tokens", 0), usage.get("cache_read_tokens", 0),
          usage.get("cache_write_tokens", 0), usage.get("web_searches", 0), round(usd, 6),
-         round(usd * cfg["ai"]["usd_inr"], 4), latency_ms, status, request_id, trace_id, error)).lastrowid
+         round(usd * cfg["ai"]["usd_inr"], 4), latency_ms, status, request_id, trace_id, error, prompt_ver, pii)).lastrowid
     conn.commit()
     return rid
 
@@ -311,8 +369,58 @@ def _worst_case_usd(model: str, system: Any, messages: list, max_tokens: int, cf
 
 
 # ---- tracing (Langfuse, optional) ------------------------------------------------------------
+def _otlp_post(spans: list) -> bool:
+    pk, sk = os.environ.get("LANGFUSE_PUBLIC_KEY"), os.environ.get("LANGFUSE_SECRET_KEY")
+    if not (pk and sk):
+        return False
+    host = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com").rstrip("/")
+    body = {"resourceSpans": [{"resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "aic-screener"}}]},
+                               "scopeSpans": [{"scope": {"name": "aic.llm"}, "spans": spans}]}]}
+    req = urllib.request.Request(f"{host}/api/public/otel/v1/traces", data=json.dumps(body).encode(), method="POST",
+                                 headers={"Content-Type": "application/json", "x-langfuse-ingestion-version": "4",
+                                          "Authorization": "Basic " + base64.b64encode(f"{pk}:{sk}".encode()).decode()})
+    try:
+        urllib.request.urlopen(req, timeout=10).read()
+        return True
+    except Exception as e:                                       # tracing must never break or block a run
+        print(f"langfuse trace failed: {e}", file=sys.stderr)
+        return False
+
+
+def new_trace_id() -> str:
+    return uuid.uuid4().hex
+
+
+def new_span_id() -> str:
+    return uuid.uuid4().hex[:16]
+
+
+def trace_step(trace_id: str, name: str, started: float, ended: float, span_id: Optional[str] = None,
+               parent_span_id: Optional[str] = None, attrs: Optional[dict] = None, error: Optional[str] = None,
+               trace_name: Optional[str] = None, tags: Optional[list] = None) -> Optional[str]:
+    """A non-model step of an application's run (queue wait, a stage, validation, routing) as a Langfuse span."""
+    span_id = span_id or new_span_id()
+    a = [{"key": "langfuse.observation.type", "value": {"stringValue": "span"}}]
+    if trace_name:
+        a.append({"key": "langfuse.trace.name", "value": {"stringValue": trace_name}})
+    if tags:
+        a.append({"key": "langfuse.trace.tags", "value": {"arrayValue": {"values": [{"stringValue": t} for t in tags]}}})
+    if error:
+        a += [{"key": "langfuse.observation.level", "value": {"stringValue": "ERROR"}},
+              {"key": "langfuse.observation.status_message", "value": {"stringValue": error[:500]}}]
+    for k, v in (attrs or {}).items():
+        a.append({"key": f"langfuse.observation.metadata.{k}", "value": {"stringValue": str(v)}})
+    span = {"traceId": trace_id, "spanId": span_id, "name": name, "kind": 1,
+            "startTimeUnixNano": str(int(started * 1e9)), "endTimeUnixNano": str(int(ended * 1e9)),
+            "attributes": a, "status": {"code": 2 if error else 1}}
+    if parent_span_id:
+        span["parentSpanId"] = parent_span_id
+    return span_id if _otlp_post([span]) else None
+
+
 def _langfuse(task: str, company: Optional[str], model: str, usage: dict, usd: float, started: float, ended: float,
-              system: Any, messages: list, output: Any) -> Optional[str]:
+              system: Any, messages: list, output: Any, prompt_ver: Optional[str] = None, ctx: Optional[dict] = None,
+              gateway: Optional[str] = None) -> Optional[str]:
     """One Langfuse generation per call, sent as an OpenTelemetry span (OTLP/HTTP JSON) to
     /api/public/otel/v1/traces with `x-langfuse-ingestion-version: 4`. (The older /api/public/ingestion
     batch endpoint now answers 410 Gone on Langfuse Cloud.) Returns the trace id, or None. Never blocks a call."""
@@ -320,7 +428,8 @@ def _langfuse(task: str, company: Optional[str], model: str, usage: dict, usd: f
     if not (pk and sk):
         return None
     host = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com").rstrip("/")
-    tid, sid = uuid.uuid4().hex, uuid.uuid4().hex[:16]
+    ctx = ctx or {}
+    tid, sid = ctx.get("trace_id") or uuid.uuid4().hex, uuid.uuid4().hex[:16]
     s = lambda k, v: {"key": k, "value": {"stringValue": str(v)}}
     i = lambda k, v: {"key": k, "value": {"intValue": int(v)}}
     attrs = [s("langfuse.observation.type", "generation"), s("langfuse.trace.name", f"aic.{task}"),
@@ -335,11 +444,18 @@ def _langfuse(task: str, company: Optional[str], model: str, usage: dict, usd: f
              i("gen_ai.usage.input_tokens", usage.get("input_tokens", 0)),
              i("gen_ai.usage.output_tokens", usage.get("output_tokens", 0)),
              s("langfuse.trace.metadata.company", company or ""), s("langfuse.observation.metadata.task", task),
+             s("langfuse.observation.metadata.prompt_version", prompt_ver or "unrecorded"),
+             s("langfuse.observation.metadata.gateway", gateway or ""),
              {"key": "langfuse.trace.tags", "value": {"arrayValue": {"values": [{"stringValue": "aic-screener"},
-                                                                                {"stringValue": task}]}}}]
+                                                                                {"stringValue": task}]
+                                                                                + [{"stringValue": t} for t in ctx.get("tags", [])]}}}]
     span = {"traceId": tid, "spanId": sid, "name": task, "kind": 3,
             "startTimeUnixNano": str(int(started * 1e9)), "endTimeUnixNano": str(int(ended * 1e9)),
             "attributes": attrs, "status": {"code": 1}}
+    if ctx.get("parent_span_id"):
+        span["parentSpanId"] = ctx["parent_span_id"]
+    if ctx.get("trace_id"):                   # part of an application's run: that run's root span names the trace
+        attrs[:] = [x for x in attrs if x["key"] != "langfuse.trace.name"]
     body = {"resourceSpans": [{"resource": {"attributes": [s("service.name", "aic-screener")]},
                                "scopeSpans": [{"scope": {"name": "aic.llm"}, "spans": [span]}]}]}
     req = urllib.request.Request(f"{host}/api/public/otel/v1/traces", data=json.dumps(body).encode(), method="POST",
@@ -356,9 +472,15 @@ def _langfuse(task: str, company: Optional[str], model: str, usage: dict, usd: f
 # ---- the call ----------------------------------------------------------------------------------
 def call(conn: sqlite3.Connection, task: str, messages: List[dict], system: Any = None, company: Optional[str] = None,
          tools: Optional[list] = None, max_tokens: int = 32000, model: Optional[str] = None, client=None,
-         cfg: Optional[dict] = None, use_cache: bool = True) -> dict:
-    """Returns {"text", "content" (list of block dicts), "stop_reason", "usage", "cost_inr", "cached", "call_id"}."""
+         cfg: Optional[dict] = None, use_cache: bool = True, prompt_ver: Optional[str] = None,
+         trace: Optional[dict] = None) -> dict:
+    """Returns {"text", "content" (list of block dicts), "stop_reason", "usage", "cost_inr", "cached", "call_id"}.
+
+    Emails and phone numbers are replaced with ID tokens before anything is sent (redact). `prompt_ver` is recorded
+    on the ledger row and the Langfuse generation. `trace` ({"trace_id", "parent_span_id", "tags"}) nests this
+    generation inside an application's run in Langfuse."""
     cfg = cfg or config.load()
+    (system, messages), pii = redact([system, messages])
     ai = cfg["ai"]
     model = model or ai["models"][task]
     effort = ai.get("effort", {}).get(task)
@@ -379,7 +501,8 @@ def call(conn: sqlite3.Connection, task: str, messages: List[dict], system: Any 
     if ks or spent + worst > ai["spend_limits_inr_per_day"]["stop"]:
         why = f"kill switch ({ks['kind']} by {ks['by']})" if ks else \
             f"today's spend ₹{spent:,.0f} + this call's worst case ₹{worst:,.0f} would cross the stop limit"
-        _log(conn, cfg, task=task, company=company, model=model, gw=gw, usage={}, status="blocked", error=why, day=d)
+        _log(conn, cfg, task=task, company=company, model=model, gw=gw, usage={}, status="blocked", error=why, day=d,
+             prompt_ver=prompt_ver, pii=pii)
         raise SpendStopped(why)
 
     key = cache_key(model, system, messages, tools, effort)
@@ -387,7 +510,8 @@ def call(conn: sqlite3.Connection, task: str, messages: List[dict], system: Any 
         hit = conn.execute("SELECT response FROM llm_cache WHERE key=?", (key,)).fetchone()
         if hit:
             r = json.loads(hit[0])
-            cid = _log(conn, cfg, task=task, company=company, model=model, gw="cache", usage={}, status="cached", day=d)
+            cid = _log(conn, cfg, task=task, company=company, model=model, gw="cache", usage={}, status="cached", day=d,
+                       prompt_ver=prompt_ver, pii=pii)
             return {**r, "cost_inr": 0.0, "cached": True, "call_id": cid}
 
     started = time.time()
@@ -418,15 +542,17 @@ def call(conn: sqlite3.Connection, task: str, messages: List[dict], system: Any 
             stop, req_id = msg.stop_reason, getattr(msg, "_request_id", None) or getattr(msg, "id", None)
     except Exception as e:
         _log(conn, cfg, task=task, company=company, model=model, gw=gw, usage={}, status="error",
-             latency_ms=int((time.time() - started) * 1000), error=f"{type(e).__name__}: {e}"[:500], day=d)
+             latency_ms=int((time.time() - started) * 1000), error=f"{type(e).__name__}: {e}"[:500], day=d,
+             prompt_ver=prompt_ver, pii=pii)
         raise
     ended = time.time()
     out = {"text": text, "content": content, "stop_reason": stop, "usage": usage}
     usd = cost_usd(model, usage, cfg)
-    trace = _langfuse(task, company, model, usage, usd, started, ended, system, messages, text)
+    trace_id = _langfuse(task, company, model, usage, usd, started, ended, system, messages, text,
+                         prompt_ver=prompt_ver, ctx=trace, gateway=gw)
     cid = _log(conn, cfg, task=task, company=company, model=model, gw=gw, usage=usage, status="ok",
                latency_ms=int((ended - started) * 1000), request_id=req_id,
-               trace_id=trace, day=d)
+               trace_id=trace_id, day=d, prompt_ver=prompt_ver, pii=pii)
     if use_cache and stop == "end_turn":
         conn.execute("INSERT OR REPLACE INTO llm_cache (key, model, response, created_at) VALUES (?, ?, ?, ?)",
                      (key, model, json.dumps(out), datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()))
@@ -466,7 +592,8 @@ def spend_report(conn, cfg: Optional[dict] = None) -> dict:
         f"FROM ai_calls GROUP BY {col} ORDER BY 3 DESC")]
     return {"today": d, "today_inr": round(spend_inr(conn, d), 2), "total_inr": round(spend_inr(conn), 2),
             "limits_inr": cfg["ai"]["spend_limits_inr_per_day"], "kill_switch": kill_state(conn, d),
-            "by_task": q("task"), "by_model": q("model"), "by_status": q("status")}
+            "by_task": q("task"), "by_model": q("model"), "by_status": q("status"), "by_company": q("company"),
+            "by_day": q("day"), "by_week": q("strftime('%Y-W%W', day)"), "by_month": q("substr(day, 1, 7)")}
 
 
 if __name__ == "__main__":

@@ -67,3 +67,13 @@ User, 2026-11-21: Gemini support added (`gemini-*` models). User, 2026-11-24: `a
 - **Recording feedback:** every correction and email edit needs a one-line reason and a scope (`general` or `this_case`). `this_case` and flagged (`bad_day`/`retracted`) feedback is never reused. Email edits are their own append-only rows (`outreach.edit_draft`).
 - **What reaches the scoring prompt:** only lessons that 2+ other companies in the same sector agree on (same criterion, same direction), with their reasons (`feedback.lessons`, `runner.build_request(..., conn)`).
 - **Fine-tuning:** a readiness check against a PROPOSED bar for Kushal (`finetune.bar`), plus a dataset export to `data/finetune/` (gitignored); `--per-criterion` writes one criterion per example with a fixed input map (`finetune.criterion_inputs`) so it fits a free T4. Training: `notebooks/unsloth_finetune.ipynb` (Colab). Nothing trains automatically. See `reports/feedback_and_finetuning.md`.
+
+## Hand-over readiness (Case 04, Build 5; 2026-11-25)
+
+- **Task 1:** every model call is redacted (`llm.redact`: emails and phones become ID tokens, applied to decoded JSON) and audited (`aic/audit.py`).
+- **Task 2:** applications go through the `jobs` queue (`aic/queue.py`). Jobs are never deleted, and `needs_attention` needs a reason. `python -m aic.queue volume-test` runs 20 at once with a simulated model and injected faults, and must lose none.
+- **Task 3:** Portkey calls send retries via `x-portkey-config` (`ai.portkey_retry`).
+- **Task 4:** each application is one Langfuse trace with step spans, and every call records its `prompt_version` (prompt file hash).
+- **Task 5:** cost is totalled by application, day, week and month.
+
+The dashboard page `#handover` and `reports/handover_readiness.md` answer Kushal's five questions and list every pain point with its status and any gap.

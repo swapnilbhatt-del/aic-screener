@@ -161,8 +161,11 @@ def validate_output(stage: str, company: str, rec: dict) -> list:
     return []                       # claim quotes are verified against the page text by `python -m aic.ingest`
 
 
+PROMPT_FILES = {"extraction": "extract_claims.md", "research": "research.md", "scoring": "score.md"}
+
+
 def run(conn, stage: str, company: str, force: bool = False, model: Optional[str] = None,
-        out_base: Path = DATA, client=None) -> dict:
+        out_base: Path = DATA, client=None, trace: Optional[dict] = None, use_cache: bool = True) -> dict:
     if stage not in STAGES:
         raise RunError(f"stage must be one of {STAGES}")
     out = out_path(stage, company, out_base)
@@ -174,7 +177,8 @@ def run(conn, stage: str, company: str, force: bool = False, model: Optional[str
     messages, cost, calls = list(req["messages"]), 0.0, 0
     for _ in range(6):                        # server tools may pause a long turn; continue it (each call metered)
         r = llm.call(conn, stage, messages, system=req["system"], company=company, tools=req["tools"],
-                     model=model, client=client)
+                     model=model, client=client, prompt_ver=llm.prompt_version(PROMPT_FILES[stage]),
+                     trace=trace, use_cache=use_cache)
         cost, calls = cost + r["cost_inr"], calls + 1
         if r["stop_reason"] != "pause_turn":
             break
@@ -192,7 +196,8 @@ def run(conn, stage: str, company: str, force: bool = False, model: Optional[str
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(rec, indent=1, ensure_ascii=False))
     share = len(json.dumps(injected, ensure_ascii=False)) / max(1, len(req["system"]) + len(req["messages"][0]["content"]))
-    return {"stage": stage, "company": company, "path": str(out), "calls": calls, "cost_inr": round(cost, 2),
+    return {"stage": stage, "company": company, "path": str(out), "calls": calls, "cost_inr": round(cost, 4),
+            "prompt_version": llm.prompt_version(PROMPT_FILES[stage]),
             "validation_errors": errs, "lessons_injected": len(injected), "feedback_share_of_prompt": round(share, 3)}
 
 

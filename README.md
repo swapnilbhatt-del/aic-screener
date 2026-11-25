@@ -33,4 +33,6 @@ API keys: copy `.env.example` to `.env` (gitignored). Cost, ROI and Portkey/Lang
 
 Feedback loop and fine-tuning readiness: `python -m aic.learning disagreement|readiness|export [--per-criterion]`; record an email edit with `python -m aic.outreach edit`, flag bad-day feedback with `python -m aic.feedback flag`; train with `notebooks/unsloth_finetune.ipynb` in Colab (see `reports/feedback_and_finetuning.md`).
 
+Hand-over checks (Case 04): `python -m aic.audit` (what each model call sends), `python -m aic.queue volume-test` (20 applications at once, none lost); see `reports/handover_readiness.md`.
+
 Public deployment: `python -m aic.dashboard --site`, copy `site/` to a folder named `aic-screener`, then `vercel deploy --prod --yes` there (live at https://aic-screener.vercel.app). Requirements audit: `reports/requirements_audit.md`.

@@ -191,6 +191,8 @@ ai:
   usd_inr: 88.0           # ASSUMPTION: placeholder rate, not sourced. Replace with the rate your card is billed at.
   spend_limits_inr_per_day: {alert: 1000, stop: 10000}   # user 2026-11-20 (lecture example figures)
   day_tz: Asia/Kolkata
+  # Case Task 3: automatic retries at the Portkey gateway (sent as the x-portkey-config header on every Portkey call).
+  portkey_retry: {attempts: 3, on_status_codes: [429, 500, 502, 503, 504]}
 roi:
   riya_inr_per_hour: 1000   # user 2026-11-20: PLACEHOLDER from the lecture; replace with Riya's real cost
   riya_minutes_per_application: 30   # case brief

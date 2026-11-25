@@ -305,6 +305,7 @@ def test_portkey_client_headers(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "g-test")
     h = llm.PortkeyGeminiClient().headers
     assert h["x-portkey-api-key"] == "pk-test" and h["x-portkey-provider"] == "google" and h["Authorization"] == "Bearer g-test"
+    assert json.loads(h["x-portkey-config"])["retry"] == {"attempts": 3, "on_status_codes": [429, 500, 502, 503, 504]}
     monkeypatch.setenv("PORTKEY_VIRTUAL_KEY", "vk-test")
     h = llm.PortkeyGeminiClient().headers
     assert h["x-portkey-virtual-key"] == "vk-test" and "Authorization" not in h

@@ -178,6 +178,14 @@ td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .st-FAIL,.st-hold{color:var(--pass);font-weight:600}.st-UNCHECKABLE{color:var(--muted);font-weight:600}.st-flag{color:var(--hold);font-weight:600}.st-clear{color:var(--call);font-weight:600}
 .ev{margin:4px 0;font-size:13px;color:var(--text2)}
 .tabs{margin:0 0 16px}
+.st{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:600;white-space:nowrap}
+.st-done{background:var(--call-bg);color:var(--call)}.st-partial{background:var(--review-bg);color:var(--review)}.st-blocked{background:var(--pass-bg);color:var(--pass)}
+.qgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-bottom:16px}
+.qcard{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:8px}
+.qcard .qn{font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.qcard .qq{font-size:15px;font-weight:600}.qcard .qt{font-size:12px;color:var(--text2)}.qcard .qe{font-size:13px;color:var(--text2);flex:1}
+.quote{border-left:3px solid var(--accent);padding:6px 0 6px 14px;margin:0 0 16px;color:var(--text2);font-style:italic;font-size:15px;max-width:80ch}
+.svgc svg{display:block;width:100%;height:auto}
 </style></head>
 <body>
 <header class="topbar"><div class="brand"><div class="mark" aria-hidden="true">AIC</div><div><b>Screener</b><small>All In Capital · pre-seed inbound</small></div></div>
@@ -228,6 +236,7 @@ document.getElementById("meta").textContent="Batch generated "+D.generated+" · 
 // ---- routing (a plain #name per view, so a view can be linked)
 let current=null;const ui={q:"",band:null,sort:"score"};
 function routeFromHash(){const h=decodeURIComponent((location.hash||"").slice(1));current=null;if(!h)return;
+  if(h==="handover"&&D.handover){current="__handover";return;}
   const c=D.companies.find(x=>slug(x.company)===h);if(c){current=c.company;return;}
   if(PAGES.some(p=>p[0]===h)||(h==="backtest"&&D.backtest))current="__"+h;}
 function go(v){current=v;const h=v===null?"":(v.startsWith("__")?v.slice(2):slug(v));try{if(("#"+h)!==location.hash){history.replaceState(null,"",h?"#"+h:location.pathname+location.search);}}catch(e){}render();window.scrollTo(0,0);}
@@ -238,6 +247,7 @@ function nav(){const n=document.getElementById("nav");n.replaceChildren();
   const item=(key,label,sub,right,icon)=>el("button",{class:"navi","aria-current":String(current===key),on:{click:()=>go(key)}},
     icon?el("span",{class:"ico","aria-hidden":"true"},icon):null,el("span",{class:"nm"},label,sub?el("span",{class:"sub"},sub):null),right||null);
   n.append(el("h4",{},"Pipeline"),item(null,"Shortlist",D.companies.length+" applications",null,"☰"));
+  if(D.handover)n.append(item("__handover","Ready to hand over?","Kushal's 5 questions",null,"✓"));
   n.append(el("h4",{},"Applications"));
   for(const c of [...D.companies].sort((a,b)=>b.total-a.total))
     n.append(item(c.company,c.company,c.sector||"",el("span",{class:"pill num p-"+c.band,title:BAND[c.band]},c.total.toFixed(0))));
@@ -471,6 +481,8 @@ function costView(){const A=D.ai_cost;const v=el("div");v.append(head("Assurance
     M.calls?el("div",{class:"grid2"},el("div",{},el("h3",{style:"margin-top:0"},"By task"),table([[0,"Task"],[1,"Calls","n"],[2,"₹","n"]],M.by_task)),
       el("div",{},el("h3",{style:"margin-top:0"},"By model"),table([[0,"Model"],[1,"Calls","n"],[2,"₹","n"]],M.by_model)),
       el("div",{},el("h3",{},"By day"),table([[0,"Day"],[1,"Calls","n"],[2,"₹","n"]],M.by_day)),
+      el("div",{},el("h3",{},"By week"),table([[0,"Week"],[1,"Calls","n"],[2,"₹","n"]],M.by_week||[])),
+      el("div",{},el("h3",{},"By month"),table([[0,"Month"],[1,"Calls","n"],[2,"₹","n"]],M.by_month||[])),
       el("div",{},el("h3",{},"By application"),table([[0,"Company"],[1,"Calls","n"],[2,"₹","n"],[3,"In","n"],[4,"Out","n"]],M.by_company))):
       el("p",{class:"small muted"},"The ledger is empty: the 10 applications were scored by build-session agents, which are not metered per call."),
     (M.partial_applications||[]).length?el("p",{class:"small muted"},"Not counted as a per-application cost (not all three stages ran): "+M.partial_applications.map(p=>p.company+" ("+p.stages.join(", ")+")").join("; ")+"."):"",
@@ -541,9 +553,87 @@ function learningView(){const L=D.learning;const v=el("div");
   if(L.flags.length)v.append(el("section",{class:"card"},el("h2",{},"Flagged feedback"),table([["target","Target"],["target_id","Id","n"],["kind","Kind"],["reason","Reason","small"],["flagged_by","By"],["flagged_at","At","small"]],L.flags)));
   return v;}
 
+// ---- small SVG charts
+function svgEl(tag,a){const e=document.createElementNS("http://www.w3.org/2000/svg",tag);for(const[k,v]of Object.entries(a))e.setAttribute(k,v);return e;}
+function svgText(x,y,t,a){const e=svgEl("text",Object.assign({x:x,y:y,"font-size":12,fill:css("--text")},a||{}));e.textContent=t;return e;}
+function pairBars(rows,la,lb,fmtv){const W=760,rh=44,left=200,right=70,H=rows.length*rh+30;const mx=Math.max(...rows.map(r=>Math.max(r.a||0,r.b||0)),1);
+  const svg=svgEl("svg",{viewBox:"0 0 "+W+" "+H,role:"img","aria-label":la+" vs "+lb});const xs=v=>left+(W-left-right)*v/mx;
+  rows.forEach((r,i)=>{const y=10+i*rh;svg.append(svgText(left-10,y+20,r.label,{"text-anchor":"end","font-weight":500}));
+    const a=svgEl("rect",{x:left,y:y+4,width:Math.max(1,xs(r.a)-left),height:14,rx:3,fill:css("--line2")});
+    const b=svgEl("rect",{x:left,y:y+21,width:Math.max(1,xs(r.b)-left),height:14,rx:3,fill:css("--accent")});
+    for(const [el2,v,lab] of [[a,r.a,la],[b,r.b,lb]]){el2.addEventListener("mousemove",ev=>showTip(ev,[r.label,lab+": "+fmtv(v)]));el2.addEventListener("mouseleave",hideTip);}
+    svg.append(a,b,svgText(xs(r.a)+6,y+16,fmtv(r.a),{"font-size":11,fill:css("--muted")}),svgText(xs(r.b)+6,y+33,fmtv(r.b)+(r.tag?"  "+r.tag:""),{"font-size":11,fill:css("--text"),"font-weight":600}));});
+  return el("div",{class:"svgc"},el("div",{class:"legend"},el("span",{},el("span",{class:"sw",style:"background:var(--line2)"}),la),el("span",{},el("span",{class:"sw",style:"background:var(--accent)"}),lb)),svg);}
+function stackRows(rows,parts){const W=760,rh=40,left=200,right=20,H=rows.length*rh+16;const svg=svgEl("svg",{viewBox:"0 0 "+W+" "+H,role:"img","aria-label":"Outcomes by phase"});
+  rows.forEach((r,i)=>{const y=8+i*rh;svg.append(svgText(left-10,y+19,r.label,{"text-anchor":"end","font-weight":500}));const tot=parts.reduce((s,p)=>s+(r[p[0]]||0),0)||1;let x=left;
+    for(const [k,lab,col] of parts){const v=r[k]||0;if(!v)continue;const w=(W-left-right)*v/tot;const rect=svgEl("rect",{x:x+1,y:y+4,width:Math.max(0,w-2),height:24,rx:3,fill:css(col)});
+      rect.addEventListener("mousemove",ev=>showTip(ev,[r.label,lab+": "+v]));rect.addEventListener("mouseleave",hideTip);svg.append(rect);
+      if(w>28)svg.append(svgText(x+w/2,y+20,String(v),{"text-anchor":"middle",fill:"#fff","font-weight":700}));x+=w;}});
+  return el("div",{class:"svgc"},el("div",{class:"legend"},...parts.map(([k,lab,col])=>el("span",{},el("span",{class:"sw",style:"background:var("+col+")"}),lab))),svg);}
+function colBars(rows,fmtv,label){const W=760,H=200,top=16,bottom=34,left=40,right=10;const mx=Math.max(...rows.map(r=>r.v),0.0001);
+  const svg=svgEl("svg",{viewBox:"0 0 "+W+" "+H,role:"img","aria-label":label});const bw=Math.min(60,(W-left-right)/Math.max(rows.length,1)-12);
+  svg.append(svgEl("line",{x1:left,x2:W-right,y1:H-bottom,y2:H-bottom,stroke:css("--line2")}));
+  rows.forEach((r,i)=>{const x=left+10+i*((W-left-right)/Math.max(rows.length,1));const h=(H-top-bottom)*r.v/mx;
+    const rect=svgEl("rect",{x:x,y:H-bottom-h,width:bw,height:Math.max(1,h),rx:4,fill:css("--s1")});rect.addEventListener("mousemove",ev=>showTip(ev,[r.k,fmtv(r.v)+(r.n!=null?" · "+r.n+" calls":"")]));rect.addEventListener("mouseleave",hideTip);
+    svg.append(rect,svgText(x+bw/2,H-bottom-h-6,fmtv(r.v),{"text-anchor":"middle","font-size":11,fill:css("--text2")}),svgText(x+bw/2,H-bottom+16,r.k,{"text-anchor":"middle","font-size":11,fill:css("--muted")}));});
+  return el("div",{class:"svgc"},svg);}
+function stChip(s){return el("span",{class:"st st-"+s},{done:"✓ Done",partial:"◐ Partly",blocked:"✕ Blocked"}[s]||s);}
+
+function handoverView(){const H=D.handover;const v=el("div");
+  v.append(head("Build 5 · Fund II readiness","Ready to hand over?","Fund II is announced in three weeks and about 100 applications are expected in one day. Kushal will not switch off Riya's triage because a demo went well. These are his five questions, answered with what the system can show today."));
+  v.append(el("div",{class:"quote"},"“Can I hand this to Riya as her main way of screening before the announcement? How do I know I can trust this tool?” — Kushal Bhagia"));
+  const qs=H.questions,ndone=qs.filter(q=>q.status==="done").length;
+  const k=el("div",{class:"kpis"});const tile=(cls,label,val,hint)=>el("div",{class:"kpi "+cls,style:"cursor:default"},el("div",{class:"k"},label),el("div",{class:"v num"},val),el("div",{class:"h"},hint));
+  const V=H.volume||{};
+  k.append(tile("k-call","Tasks done",ndone+" / "+qs.length,"blocked ones need a key or partners"),
+    tile(V.lost===0?"k-call":"k-pass","Applications lost",V.enqueued!=null?String(V.lost):"—",V.enqueued!=null?("of "+V.enqueued+" in the volume test"):"not run"),
+    tile("k-open","Personal data sent",String(0),H.audit.calls.reduce((s,c)=>s+c.pii_found,0)+" emails/phones replaced with IDs"),
+    tile(H.langfuse_active?"k-call":"k-hold","Langfuse",H.langfuse_active?"Live":"Off",H.langfuse_active?"every call and step traced":"needs keys"),
+    tile(H.portkey_active?"k-call":"k-hold","Portkey",H.portkey_active?"Live":"Not active",H.portkey_active?"retries on":"built; no API key"));
+  v.append(k);
+  const g=el("div",{class:"qgrid"});
+  for(const q of qs)g.append(el("div",{class:"qcard"},el("div",{class:"qn"},"Question "+q.n),el("div",{class:"qq"},q.q),el("div",{class:"qt"},q.task),stChip(q.status),el("div",{class:"qe"},q.evidence),
+    q.page&&q.page!=="handover"?el("button",{class:"btn",style:"align-self:flex-start",on:{click:()=>go("__"+q.page)}},"Open details →"):null));
+  v.append(g);
+  // Q2: prompt audit
+  const A=H.audit;
+  v.append(el("section",{class:"card"},el("h2",{},"Is it safe? What each model call sends"),
+    el("p",{class:"lede"},"Average characters available for each kind of call against what is actually sent, measured from the live request builders. "+A.redaction),
+    pairBars(A.calls.map(c=>({label:c.call,a:c.available_chars,b:c.sent_chars,tag:c.trimmed_pct!=null?("−"+c.trimmed_pct+"%"):""})),"available","sent",x=>(x/1000).toFixed(1)+"k chars"),
+    tableEl(["Call","Sends","Emails/phones found","Sent","Why"],A.calls.map(c=>el("tr",{},el("td",{},c.call),el("td",{class:"small"},c.sends),el("td",{class:"n"},c.pii_found),el("td",{class:"n"},c.pii_sent),el("td",{class:"small"},c.note))))));
+  // Q3: volume test
+  if(H.volume){const P=V.phases||[];
+    v.append(el("section",{class:"card"},el("h2",{},"Can it handle real-world use? 20 applications at once"),
+      el("p",{class:"lede"},V.enqueued+" applications went into the queue together; "+V.workers+" run at a time and the rest wait their turn. "+V.note),
+      el("div",{class:"kpis",style:"grid-template-columns:repeat(4,minmax(0,1fr))"},tile("k-call","Scored",String(V.scored),"all stages ran and passed validation"),
+        tile("k-hold","Needs attention",String(V.needs_attention),"each with a reason; a person looks"),tile("k-partner_review","Queued at the end",String(V.queued),"waiting for the limit to reset"),
+        tile(V.lost?"k-pass":"k-call","Lost",String(V.lost),"enqueued = scored + queued + needs attention")),
+      stackRows(P.map(p=>({label:"Phase "+p.phase,scored:p.scored,queued:p.queued,needs_attention:p.needs_attention})),[["scored","Scored","--call"],["queued","Queued (paused by the daily stop)","--review"],["needs_attention","Needs attention","--hold"]]),
+      el("p",{class:"small muted"},"Phase 1 lowers the daily stop so the pause path runs: the queue stops taking work and the rest stay queued with a reason. Phase 2 is the next day: the limit resets and the same queue drains. Transient 'busy' errors are retried ("+V.retries+" retries)."),
+      el("h3",{},"Needs attention, and why"),tableEl(["Application","Reason"],Object.entries(V.attention_reasons).map(([l,r])=>el("tr",{},el("td",{},l),el("td",{class:"small"},r)))),
+      el("details",{class:"ev"},el("summary",{},"All "+V.enqueued+" applications"),tableEl(["Application","Outcome","Attempts","Reason"],V.jobs.map(j=>el("tr",{},el("td",{},j.label),el("td",{},stChip(j.status==="scored"?"done":j.status==="queued"?"partial":"blocked"),"  ",j.status),el("td",{class:"n"},j.attempts),el("td",{class:"small"},j.reason||"")))))));}
+  // Q4/5: cost and operations
+  const M=D.ai_cost.metered;
+  const days=[...M.by_day].reverse().map(r=>({k:r[0].slice(5),v:r[2],n:r[1]}));
+  v.append(el("div",{class:"grid2",style:"margin-bottom:16px"},
+    el("section",{class:"card"},el("h2",{},"Does the economics work? Spend by day"),el("p",{class:"lede"},"Every call costed in ₹ from the ledger. Limits: alert ₹"+D.ai_cost.limits.alert.toLocaleString("en-IN")+", stop ₹"+D.ai_cost.limits.stop.toLocaleString("en-IN")+" a day (far above these test amounts)."),
+      days.length?colBars(days,x=>"₹"+x.toFixed(2),"Spend by day"):el("div",{class:"empty"},"No calls yet."),
+      el("div",{class:"grid2"},el("div",{},el("h3",{},"By week"),table([[0,"Week"],[1,"Calls","n"],[2,"₹","n"]],M.by_week||[])),el("div",{},el("h3",{},"By month"),table([[0,"Month"],[1,"Calls","n"],[2,"₹","n"]],M.by_month||[])))),
+    el("section",{class:"card"},el("h2",{},"The Fund II day: 100 applications"),el("p",{class:"lede"},"What one announcement day means, in Riya's time and in the system's limits."),
+      el("ul",{class:"clean"},
+        el("li",{},el("b",{},H.fund_day.riya_hours+" hours of Riya"),": 100 × 30 minutes, about "+H.fund_day.riya_working_days+" working days for one day's inflow (₹"+H.fund_day.riya_cost_inr.toLocaleString("en-IN")+" at the placeholder rate)."),
+        el("li",{},el("b",{},"The queue: "),"applications wait their turn, at most "+(V.workers||4)+" run at once, nothing is lost, and anything that fails is marked needs attention with a reason."),
+        el("li",{},el("b",{},"The daily stop: "),D.ai_cost.build_session?("at the build-session upper bound (₹"+D.ai_cost.build_session.if_all_uncached_input_inr+" an application, before output tokens and searches) 100 applications would be about ₹"+Math.round(100*D.ai_cost.build_session.if_all_uncached_input_inr).toLocaleString("en-IN")+", under the ₹"+H.fund_day.stop_inr.toLocaleString("en-IN")+" stop. If it is crossed, the queue pauses rather than failing."):"not measured"),
+        el("li",{class:"muted"},"Not yet measured: real cost and latency per application on a paid model.")))));
+  // pain points
+  const pc=H.pain_counts;
+  v.append(el("section",{class:"card"},el("h2",{},"Every pain point in the case"),el("p",{class:"lede"},pc.done+" done, "+pc.partial+" partly done (each with the gap stated), "+pc.blocked+" blocked."),
+    tableEl(["Pain point","Status","How it is handled","What is still missing"],H.pains.map(p=>el("tr",{},el("td",{},p.pain),el("td",{},stChip(p.status)),el("td",{class:"small"},p.how),el("td",{class:"small muted"},p.gap||"—"))))));
+  return v;}
+
 function render(){nav();hideTip();const view=document.getElementById("view");view.replaceChildren();
   if(current===null)view.append(overview());else if(current==="__backtest")view.append(backtestView());
-  else if(current==="__trust")view.append(trustView());else if(current==="__gaps")view.append(gapsView());else if(current==="__time")view.append(timeView());else if(current==="__cost")view.append(costView());else if(current==="__learning")view.append(learningView());
+  else if(current==="__trust")view.append(trustView());else if(current==="__gaps")view.append(gapsView());else if(current==="__time")view.append(timeView());else if(current==="__cost")view.append(costView());else if(current==="__learning")view.append(learningView());else if(current==="__handover")view.append(handoverView());
   else{const c=D.companies.find(x=>x.company===current);if(c)view.append(companyView(c));else{current=null;view.append(overview());}}}
 routeFromHash();render();
 </script></body></html>

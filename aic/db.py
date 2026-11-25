@@ -328,6 +328,43 @@ BEGIN SELECT RAISE(ABORT, 'flags are append-only'); END;
 """
 
 
+QUEUE_SCHEMA = """
+-- Application queue (case Task 2). Every application ends scored, queued, or needs_attention with a reason.
+-- Rows are never deleted, so none can disappear; every status change is logged in job_events.
+CREATE TABLE IF NOT EXISTS jobs (
+    id          INTEGER PRIMARY KEY,
+    batch       TEXT NOT NULL,
+    label       TEXT NOT NULL,
+    company     TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'scored', 'needs_attention')),
+    reason      TEXT,
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    cost_inr    REAL NOT NULL DEFAULT 0,
+    trace_id    TEXT,
+    queued_at   TEXT NOT NULL,
+    started_at  TEXT,
+    finished_at TEXT,
+    UNIQUE (batch, label)
+);
+CREATE TRIGGER IF NOT EXISTS jobs_no_delete BEFORE DELETE ON jobs
+BEGIN SELECT RAISE(ABORT, 'jobs are never deleted: every application must be accounted for'); END;
+CREATE TRIGGER IF NOT EXISTS jobs_attention_needs_reason BEFORE UPDATE OF status ON jobs
+WHEN NEW.status = 'needs_attention' AND (NEW.reason IS NULL OR length(trim(NEW.reason)) = 0)
+BEGIN SELECT RAISE(ABORT, 'needs_attention requires a reason'); END;
+CREATE TABLE IF NOT EXISTS job_events (
+    id     INTEGER PRIMARY KEY,
+    job_id INTEGER NOT NULL REFERENCES jobs(id),
+    at     TEXT NOT NULL,
+    status TEXT NOT NULL,
+    note   TEXT
+);
+CREATE TRIGGER IF NOT EXISTS job_events_no_update BEFORE UPDATE ON job_events
+BEGIN SELECT RAISE(ABORT, 'job events are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS job_events_no_delete BEFORE DELETE ON job_events
+BEGIN SELECT RAISE(ABORT, 'job events are append-only'); END;
+"""
+
+
 AI_SCHEMA = """
 -- Every model call, metered (lecture 19 Nov: know where every rupee goes before production). Append-only.
 CREATE TABLE IF NOT EXISTS ai_calls (
@@ -395,7 +432,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
                            "DROP TABLE threads; ALTER TABLE threads_new RENAME TO threads;")
         conn.execute("PRAGMA foreign_keys = ON")
     for table, col, ddl in (("replies", "requested_slot", "TEXT"), ("calendar_holds", "attendees", "TEXT"),
-                            ("corrections", "scope", "TEXT NOT NULL DEFAULT 'general' CHECK (scope IN ('general', 'this_case'))")):
+                            ("corrections", "scope", "TEXT NOT NULL DEFAULT 'general' CHECK (scope IN ('general', 'this_case'))"),
+                            ("ai_calls", "prompt_version", "TEXT"), ("ai_calls", "pii_redacted", "INTEGER NOT NULL DEFAULT 0")):
         if col not in [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
     conn.commit()
@@ -406,8 +444,8 @@ def connect(path: Optional[Union[str, Path]] = None) -> sqlite3.Connection:
     target = str(path) if path is not None else str(DEFAULT_DB)
     if target != ":memory:":
         Path(target).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(target)
+    conn = sqlite3.connect(target, timeout=30, check_same_thread=False)
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.executescript(SCHEMA.replace("__THREADS__", THREADS_DDL.format(name="threads")) + AI_SCHEMA + FEEDBACK_SCHEMA)
+    conn.executescript(SCHEMA.replace("__THREADS__", THREADS_DDL.format(name="threads")) + AI_SCHEMA + FEEDBACK_SCHEMA + QUEUE_SCHEMA)
     _migrate(conn)
     return conn

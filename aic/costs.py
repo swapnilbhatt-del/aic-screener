@@ -37,6 +37,8 @@ def _metered(conn, cfg) -> dict:
         "applications": n_apps,
         "partial_applications": [{"company": r[0], "stages": sorted(stages.get(r[0], []))} for r in per_co if r not in complete],
         "by_day": rows("SELECT day, count(*), round(sum(cost_inr), 2) FROM ai_calls GROUP BY day ORDER BY day DESC LIMIT 30"),
+        "by_week": rows("SELECT strftime('%Y-W%W', day), count(*), round(sum(cost_inr), 2) FROM ai_calls GROUP BY 1 ORDER BY 1 DESC LIMIT 26"),
+        "by_month": rows("SELECT substr(day, 1, 7), count(*), round(sum(cost_inr), 2) FROM ai_calls GROUP BY 1 ORDER BY 1 DESC LIMIT 12"),
         "by_task": rows("SELECT task, count(*), round(sum(cost_inr), 2) FROM ai_calls GROUP BY task ORDER BY 3 DESC"),
         "by_model": rows("SELECT model, count(*), round(sum(cost_inr), 2) FROM ai_calls GROUP BY model ORDER BY 3 DESC"),
         "by_company": per_co,
